@@ -872,11 +872,18 @@ impl Renderer {
         let last = parts.len() - 1;
         for (i, segment) in parts.iter().enumerate() {
             if i < last {
-                // Complete line segment: finalize any partial and push it.
-                if !self.partial.is_empty() {
+                // Complete line segment. Extend the open partial *before*
+                // committing it: the segment is the tail of that same line, so
+                // committing first would strand it on a row of its own. This
+                // shows up whenever a stream chunk carries a line's final token
+                // together with the newline that ends it (providers routinely
+                // batch ".\n"), leaving a lone "." under the line it belongs to.
+                if self.partial.is_empty() {
+                    self.feed.push_block(style, *segment);
+                } else {
+                    self.partial.push_str(segment);
                     self.commit_partial();
                 }
-                self.feed.push_block(style, *segment);
             } else {
                 // Last segment may still be incomplete; accumulate in partial.
                 self.partial_style = style;

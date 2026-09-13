@@ -401,3 +401,68 @@ mod cursor_positioning {
         assert_eq!(emitted_cursor(&line, VISIBLE_WIDTH + 12).1, COLS - 1);
     }
 }
+
+/// Streamed writes must not break a line just because a chunk boundary fell
+/// inside it. Providers routinely batch a line's final token together with the
+/// newline that ends it (".\n"), which used to strand the "." on its own row
+/// under the line it belonged to.
+mod streamed_writes {
+    use crate::ui::renderer::{FakeBackend, Renderer};
+    use crossterm::style::Color;
+
+    const COLS: u16 = 80;
+
+    fn renderer() -> Renderer {
+        Renderer::with_backend(Box::new(FakeBackend::new(COLS, 24)))
+    }
+
+    fn rows(r: &Renderer) -> Vec<String> {
+        r.feed()
+            .lines(COLS as usize)
+            .into_iter()
+            .map(|l| l.text.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn newline_chunk_does_not_split_the_line_it_ends() {
+        let mut r = renderer();
+        r.write(
+            "commit_partial flushes the reasoning partial. OK",
+            Color::DarkMagenta,
+        )
+        .unwrap();
+        r.write(".\n\nSo:\n", Color::DarkMagenta).unwrap();
+        assert_eq!(
+            rows(&r),
+            vec![
+                "commit_partial flushes the reasoning partial. OK.",
+                "",
+                "So:"
+            ]
+        );
+    }
+
+    #[test]
+    fn token_split_across_chunks_stays_on_one_row() {
+        let mut r = renderer();
+        r.write("let mut feed = Feed::new", Color::DarkMagenta)
+            .unwrap();
+        r.write("();\n", Color::DarkMagenta).unwrap();
+        assert_eq!(rows(&r), vec!["let mut feed = Feed::new();"]);
+    }
+
+    #[test]
+    fn blank_and_trailing_segments_still_become_rows() {
+        let mut r = renderer();
+        r.write("first\n\nsecond\n", Color::DarkMagenta).unwrap();
+        assert_eq!(rows(&r), vec!["first", "", "second"]);
+    }
+
+    #[test]
+    fn newline_only_chunk_yields_a_blank_row() {
+        let mut r = renderer();
+        r.write("\n", Color::DarkMagenta).unwrap();
+        assert_eq!(rows(&r), vec![""]);
+    }
+}

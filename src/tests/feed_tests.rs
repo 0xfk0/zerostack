@@ -539,3 +539,32 @@ fn scroll_and_selection_queries_reuse_prewrapped_rows() {
     let _ = feed.lines(80);
     assert_eq!(feed.layout_computes(), 4);
 }
+
+/// A reasoning chunk containing a blank line already renders a blank row, so
+/// the section separator must not add a second one.
+#[test]
+fn blank_row_inside_a_section_is_not_doubled() {
+    let mut feed = Feed::new();
+    feed.push_line(BlockStyle::Reasoning, "< first");
+    feed.push_line(BlockStyle::Reasoning, "");
+    feed.push_line(BlockStyle::Reasoning, "< second");
+    let lines = feed.lines(80);
+    assert_eq!(
+        lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+        ["< first", "", "< second"]
+    );
+}
+
+/// A block that renders nothing (an agent block pushed empty before its first
+/// token arrives) must not leave a stray separator row behind.
+#[test]
+fn empty_section_block_adds_no_row() {
+    let mut feed = Feed::new();
+    feed.push_line(BlockStyle::Agent, "hi");
+    feed.push_block(BlockStyle::Agent, "");
+    let lines = feed.lines(80);
+    assert_eq!(
+        lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+        ["< hi"]
+    );
+}

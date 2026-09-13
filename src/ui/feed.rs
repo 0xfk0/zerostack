@@ -271,18 +271,7 @@ impl Feed {
     fn compute_lines(&self, width: usize) -> Vec<LineEntry> {
         let mut result: Vec<LineEntry> = Vec::new();
         for block in &self.blocks {
-            // A section opener gets one blank row before it, unless the feed
-            // is empty or already ends on a blank (so explicit spacer blocks
-            // written by callers are never doubled).
-            if opens_section(block.style)
-                && let Some(last) = result.last()
-                && !last.text.is_empty()
-            {
-                result.push(LineEntry {
-                    text: CompactString::new(""),
-                    color: BlockStyle::Plain.color(),
-                });
-            }
+            let before = result.len();
             match block.style {
                 BlockStyle::Agent => {
                     let mut styled = agent_block_lines(block, width);
@@ -307,6 +296,24 @@ impl Feed {
                         }
                     }
                 }
+            }
+            // A section opener gets one blank row before it, but only when it
+            // actually rendered a non-blank first row and the row above it is
+            // non-blank too. An empty block therefore adds nothing, and an
+            // explicit spacer written by a caller is never doubled.
+            if opens_section(block.style)
+                && before > 0
+                && result.len() > before
+                && !result[before].text.is_empty()
+                && !result[before - 1].text.is_empty()
+            {
+                result.insert(
+                    before,
+                    LineEntry {
+                        text: CompactString::new(""),
+                        color: BlockStyle::Plain.color(),
+                    },
+                );
             }
         }
         result
