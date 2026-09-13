@@ -149,6 +149,10 @@ fn ctrl_d() -> UserEvent {
     UserEvent::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
 }
 
+fn ctrl_c() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+}
+
 fn ctrl_z() -> UserEvent {
     UserEvent::Key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL))
 }
@@ -341,7 +345,8 @@ async fn ctrl_d_needs_two_presses_when_enabled() {
     app.inject(ctrl_d()).await;
     assert!(!step_broke(&mut app).await, "first Ctrl-D must not exit");
     assert!(
-        app.feed_text().contains("Press Ctrl-D again to exit"),
+        app.feed_text()
+            .contains("Press Ctrl-C or Ctrl-D again to exit"),
         "hint should be shown: {}",
         app.feed_text()
     );
@@ -376,6 +381,85 @@ async fn ctrl_d_disarmed_by_other_key() {
     assert!(
         !step_broke(&mut app).await,
         "Ctrl-D after a disarming key must only re-arm"
+    );
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_c_needs_two_presses_when_enabled() {
+    let _guard = acquire();
+    let mut app = headless_app_cfg(
+        vec![],
+        Config {
+            double_ctrl_d: Some(true),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // With `double_ctrl_d` on, Ctrl-C is guarded like Ctrl-D.
+    app.inject(ctrl_c()).await;
+    assert!(!step_broke(&mut app).await, "first Ctrl-C must not exit");
+    assert!(
+        app.feed_text()
+            .contains("Press Ctrl-C or Ctrl-D again to exit"),
+        "hint should be shown: {}",
+        app.feed_text()
+    );
+
+    // Second consecutive press exits.
+    app.inject(ctrl_c()).await;
+    assert!(step_broke(&mut app).await, "second Ctrl-C must exit");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_c_and_ctrl_d_share_the_pending_quit_when_enabled() {
+    let _guard = acquire();
+    let mut app = headless_app_cfg(
+        vec![],
+        Config {
+            double_ctrl_d: Some(true),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // Either key arms; the other confirms, since they share one armed state.
+    app.inject(ctrl_c()).await;
+    assert!(!step_broke(&mut app).await, "first Ctrl-C must not exit");
+    app.inject(ctrl_d()).await;
+    assert!(
+        step_broke(&mut app).await,
+        "Ctrl-D must confirm a pending Ctrl-C quit"
+    );
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_c_disarmed_by_other_key() {
+    let _guard = acquire();
+    let mut app = headless_app_cfg(
+        vec![],
+        Config {
+            double_ctrl_d: Some(true),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    app.inject(ctrl_c()).await;
+    assert!(!step_broke(&mut app).await, "first Ctrl-C must not exit");
+
+    // Any other key (here: a literal char) cancels the pending quit.
+    app.inject(char_key('x')).await;
+    assert!(!step_broke(&mut app).await);
+
+    // So the next Ctrl-C only re-arms rather than exiting.
+    app.inject(ctrl_c()).await;
+    assert!(
+        !step_broke(&mut app).await,
+        "Ctrl-C after a disarming key must only re-arm"
     );
     app.teardown().await;
 }

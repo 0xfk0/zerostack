@@ -60,10 +60,10 @@ pub(crate) struct App<'a> {
     btw_rx: mpsc::Receiver<BtwEvent>,
     btw_abort: Vec<(u32, tokio::task::AbortHandle)>,
     btw_inflight: usize,
-    /// Whether a first `Ctrl-D` has been pressed while idle and the app is
+    /// Whether a first idle `Ctrl-C`/`Ctrl-D` has been pressed and the app is
     /// waiting for a confirming second press to exit (only when
     /// `double_ctrl_d` is enabled). Any other key clears it.
-    ctrl_d_armed: bool,
+    quit_armed: bool,
     btw_next_id: u32,
     btw_total_cost: f64,
     btw_total_in: u64,
@@ -457,7 +457,7 @@ impl<'a> App<'a> {
             btw_rx,
             btw_abort: Vec::new(),
             btw_inflight: 0,
-            ctrl_d_armed: false,
+            quit_armed: false,
             btw_next_id: 0,
             btw_total_cost: 0.0,
             btw_total_in: 0,
@@ -745,14 +745,13 @@ impl<'a> App<'a> {
                         self.renderer.write_line("btw cancelled", C_ERROR)?;
                     } else if self.run.is_running {
                         self.abort_main_run()?;
-                    } else if is_ctrl_d && self.ui.cfg.resolve_double_ctrl_d() && !self.ctrl_d_armed
-                    {
-                        // First idle Ctrl-D with the guard enabled: arm a
-                        // pending quit instead of exiting. Any other key (see
-                        // below) disarms it, so a stray Ctrl-D is harmless.
-                        self.ctrl_d_armed = true;
+                    } else if self.ui.cfg.resolve_double_ctrl_d() && !self.quit_armed {
+                        // First idle Ctrl-C/Ctrl-D with the guard enabled: arm
+                        // a pending quit instead of exiting. Any other key (see
+                        // below) disarms it, so a stray press is harmless.
+                        self.quit_armed = true;
                         self.renderer
-                            .write_line("Press Ctrl-D again to exit", C_ERROR)?;
+                            .write_line("Press Ctrl-C or Ctrl-D again to exit", C_ERROR)?;
                     } else {
                         return Ok(ControlFlow::Break(()));
                     }
@@ -762,7 +761,7 @@ impl<'a> App<'a> {
                 let is_ctrl_z =
                     key.code == KeyCode::Char('z') && key.modifiers.contains(KeyModifiers::CONTROL);
                 if is_ctrl_z {
-                    self.ctrl_d_armed = false;
+                    self.quit_armed = false;
                     // Only a real terminal can be suspended: in headless tests
                     // there is no guard and no job control.
                     if self._terminal_guard.is_some() {
@@ -784,7 +783,7 @@ impl<'a> App<'a> {
                 let is_ctrl_l =
                     key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL);
                 if is_ctrl_l {
-                    self.ctrl_d_armed = false;
+                    self.quit_armed = false;
                     // Mark both regions dirty so the next frame repaints the
                     // whole screen over whatever painted outside the tracked
                     // paths (stray escape output, another program borrowing the
@@ -793,8 +792,8 @@ impl<'a> App<'a> {
                     self.refresh()?;
                     return Ok(ControlFlow::Continue(()));
                 }
-                // Any non-Ctrl-D key cancels a pending two-press quit.
-                self.ctrl_d_armed = false;
+                // Any other key cancels a pending two-press quit.
+                self.quit_armed = false;
 
                 if let Err(e) = self.handle_key_event(key).await {
                     if e.downcast_ref::<std::io::Error>()

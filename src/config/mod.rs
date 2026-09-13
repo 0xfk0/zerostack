@@ -165,11 +165,11 @@ pub struct Config {
     /// sends, `Ctrl+J` inserts a newline).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub swap_enter_and_newline: Option<bool>,
-    /// Whether quitting the TUI with `Ctrl-D` requires two presses. When
-    /// `true`, the first press arms a pending quit and prints a hint; any
-    /// other key cancels it, a second consecutive `Ctrl-D` exits. `Ctrl-C` is
-    /// unaffected and always quits immediately when idle. Default: false
-    /// (single `Ctrl-D` quits, matching the historical behavior).
+    /// Whether quitting the TUI with `Ctrl-C` or `Ctrl-D` requires two presses.
+    /// When `true`, the first press arms a pending quit and prints a hint; any
+    /// other key cancels it, and a second consecutive press of either key
+    /// exits. Default: false (a single press quits, matching the historical
+    /// behavior).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub double_ctrl_d: Option<bool>,
     /// Terminal-compatibility folding of `Esc`/`Alt` key sequences. Some
@@ -364,7 +364,8 @@ impl Config {
         self.swap_enter_and_newline.unwrap_or(false)
     }
 
-    /// Whether quitting the TUI via `Ctrl-D` needs two presses. Default: false.
+    /// Whether quitting the TUI via `Ctrl-C`/`Ctrl-D` needs two presses.
+    /// Default: false.
     pub fn resolve_double_ctrl_d(&self) -> bool {
         self.double_ctrl_d.unwrap_or(false)
     }

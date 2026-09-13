@@ -296,7 +296,7 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
     write_result(
         ctx.renderer,
         if ctx.cfg.resolve_double_ctrl_d() {
-            "  Ctrl+C / Ctrl+D        interrupt / quit (Ctrl-D needs two presses)"
+            "  Ctrl+C / Ctrl+D        interrupt / quit (two presses to quit)"
         } else {
             "  Ctrl+C / Ctrl+D        interrupt/quit"
         },
