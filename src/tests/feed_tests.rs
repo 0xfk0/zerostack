@@ -555,6 +555,40 @@ fn blank_row_inside_a_section_is_not_doubled() {
     );
 }
 
+/// Reasoning is streamed one block per line. The run is one section, so only
+/// its first block gets the separator — not every line of it.
+#[test]
+fn adjacent_same_style_blocks_share_one_separator() {
+    let mut feed = Feed::new();
+    feed.push_line(BlockStyle::ToolResult, "ok");
+    feed.push_line(BlockStyle::Reasoning, "< one");
+    feed.push_line(BlockStyle::Reasoning, "two");
+    feed.push_line(BlockStyle::Reasoning, "three");
+    let lines = feed.lines(80);
+    assert_eq!(
+        lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+        ["ok", "", "< one", "two", "three"]
+    );
+
+    // A different style in between still starts a new section.
+    feed.push_line(BlockStyle::Tool, "◈ read \"x\"");
+    feed.push_line(BlockStyle::Reasoning, "< again");
+    let lines = feed.lines(80);
+    assert_eq!(
+        lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+        [
+            "ok",
+            "",
+            "< one",
+            "two",
+            "three",
+            "◈ read \"x\"",
+            "",
+            "< again"
+        ]
+    );
+}
+
 /// A block that renders nothing (an agent block pushed empty before its first
 /// token arrives) must not leave a stray separator row behind.
 #[test]

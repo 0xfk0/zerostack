@@ -270,6 +270,7 @@ impl Feed {
     /// Lay out every block at `width`. Called by `lines` on a cache miss.
     fn compute_lines(&self, width: usize) -> Vec<LineEntry> {
         let mut result: Vec<LineEntry> = Vec::new();
+        let mut prev_style: Option<BlockStyle> = None;
         for block in &self.blocks {
             let before = result.len();
             match block.style {
@@ -301,7 +302,14 @@ impl Feed {
             // actually rendered a non-blank first row and the row above it is
             // non-blank too. An empty block therefore adds nothing, and an
             // explicit spacer written by a caller is never doubled.
+            //
+            // Reasoning is the one style streamed as many adjacent blocks (one
+            // per line); the run is a single section, so only its first block
+            // is spaced off. Agent replies always get their own section.
+            let reasoning_run =
+                block.style == BlockStyle::Reasoning && prev_style == Some(BlockStyle::Reasoning);
             if opens_section(block.style)
+                && !reasoning_run
                 && before > 0
                 && result.len() > before
                 && !result[before].text.is_empty()
@@ -315,6 +323,7 @@ impl Feed {
                     },
                 );
             }
+            prev_style = Some(block.style);
         }
         result
     }
@@ -429,6 +438,9 @@ impl Feed {
 /// current section are excluded — `ToolResult` attaches to the `Tool` call it
 /// answers, the `Welcome` banner is many adjacent blocks, and `Plain` is the
 /// blank spacer itself.
+///
+/// Reasoning is the exception: it is streamed one block per line, so a run of
+/// adjacent `Reasoning` blocks is one section and must not be spaced apart.
 fn opens_section(style: BlockStyle) -> bool {
     matches!(style, BlockStyle::Agent | BlockStyle::Reasoning)
 }

@@ -465,4 +465,16 @@ mod streamed_writes {
         r.write("\n", Color::DarkMagenta).unwrap();
         assert_eq!(rows(&r), vec![""]);
     }
+
+    /// Providers stream reasoning in line-sized chunks, so the renderer ends up
+    /// with one block per line. Those blocks are one continuous section: the
+    /// layout must not treat each as a new section and insert a blank row
+    /// between them.
+    #[test]
+    fn consecutive_reasoning_lines_are_not_double_spaced() {
+        let mut r = renderer();
+        r.write("line one\n", Color::DarkMagenta).unwrap();
+        r.write("line two\n", Color::DarkMagenta).unwrap();
+        assert_eq!(rows(&r), vec!["line one", "line two"]);
+    }
 }
