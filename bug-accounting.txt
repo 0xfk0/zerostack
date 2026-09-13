@@ -1,0 +1,84 @@
+Bug: token/usage accounting double-counts every model call, and the context
+     meter is anchored to the run aggregate instead of the last call's prompt.
+
+Status: FIXED (see "Fix" below)
+
+Affected code
+-------------
+- src/ui/event_handler.rs  (AgentEvent::CompletionCall arm, handle_agent_done)
+- src/ui/state.rs          (AgentRunState)
+
+Symptom (user-visible)
+----------------------
+Three numbers are wrong, and they share one root cause:
+
+1. Status-line "up" total (U+21D1, ⇑, session.total_input_tokens) is roughly
+   TWICE the value shown in the provider's own control panel. Observed:
+   ⇑26.8M in zerostack vs ~13.4M at the provider for the same session.
+
+2. The context meter (context_used / context_max, e.g. "1.6M/1.0M  158%") is
+   inflated far above the real prompt size, red-lining past 100% on a session
+   that is not actually out of budget. Observed: 1.6M reported while the real
+   final prompt was ~234k.
+
+3. Cost (session.total_cost) is inflated for the same reason as (1).
+
+A single-model-call turn shows the correct context figure (~234k), which is
+the tell: the error only appears on turns that make more than one model call
+(i.e. any turn that round-trips through tool calls).
+
+Root cause
+----------
+In rig 0.40, per run:
+
+- `MultiTurnStreamItem::CompletionCall` is emitted once per model call, each
+  carrying THAT CALL's own usage
+  (rig-core-0.40.0/src/agent/prompt_request/streaming.rs).
+- `agent_run.record_completion_call(usage)` does `self.usage += usage`
+  (rig-core-0.40.0/src/agent/run/mod.rs:806), so the run's accumulated usage
+  is the SUM over all calls.
+- The terminal `FinalResponse` (surfaced by zerostack as `AgentEvent::Done`)
+  carries that accumulated usage: `PromptResponse::new(output, self.usage)`
+  (rig-core-0.40.0/src/agent/run/mod.rs:650,720), and `PromptResponse::usage()`
+  is documented as "Aggregated token usage across the whole run"
+  (rig-core-0.40.0/src/agent/prompt_request/mod.rs:378).
+
+zerostack accumulated usage in BOTH places:
+
+- The `CompletionCall` arm added each call's usage to
+  `total_input_tokens` / `total_output_tokens` / `total_cost`.
+- `handle_agent_done` (the `Done` arm) added `usage.*` AGAIN.
+
+Because `Done`'s usage equals the sum the `CompletionCall` events already
+added, every run is counted twice. The in-code comment asserted the opposite
+premise -- "The Done event only carries the final call's usage" -- which is
+false in rig 0.40 and is the origin of the bug.
+
+The context meter used the same `Done` usage for `set_calibration(...)`. That
+value is the SUM of every intermediate prompt in the run (each tool
+round-trip re-sends a growing transcript), not the size of the final prompt,
+so the meter overshoots by the whole run's tool history.
+
+Fix
+---
+- Sum totals and cost ONLY from the per-call `CompletionCall` events. rig
+  guarantees exactly one such event per model call (a provider path that
+  streams no usage still emits one, zero-valued), so the per-call sum is the
+  correct total. `handle_agent_done` no longer re-adds `Done`'s aggregate;
+  it keeps a defensive fallback that counts the aggregate once only if no
+  `CompletionCall` was seen at all that turn.
+- Record the latest per-call usage in `AgentRunState::last_completion_usage`
+  and anchor the context meter to THAT (`set_calibration`), not to `Done`'s
+  aggregate. The last call's prompt is the true current context size.
+
+Not changed
+-----------
+- The `--print` path (src/startup.rs) adds usage once per turn and is already
+  correct; it sees no per-call events and so does not double count.
+- rig itself; the bug is entirely on the zerostack side.
+
+Tests
+-----
+- src/tests/tui_loop_tests.rs::
+    a_single_model_call_is_not_double_counted
+    multi_call_run_uses_last_call_usage_for_context_anchor

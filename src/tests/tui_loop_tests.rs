@@ -25,7 +25,11 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use rig::completion::Usage;
+use rig::tool::Tool;
+use serde::Deserialize;
 
+use crate::agent::tools::ToolError;
 use crate::cli::Cli;
 use crate::config::Config;
 use crate::context::ContextFiles;
@@ -33,7 +37,7 @@ use crate::event::UserEvent;
 use crate::provider::AnyAgent;
 use crate::sandbox::Sandbox;
 use crate::session::{MessageRole, Session};
-use crate::tests::fake_model::{self, FakeModel};
+use crate::tests::fake_model::{self, FakeModel, MockCompletionModel, MockStreamEvent};
 use crate::ui::app::App;
 use crate::ui::renderer::FakeBackend;
 use crate::ui::state::UiContext;
@@ -59,6 +63,16 @@ fn isolate_data_dirs() {
 /// model response per agent run (plain text chunks per turn). Returns the app
 /// and the model (for inspecting the requests the loop sent).
 async fn headless_app(turns: Vec<Vec<&str>>) -> (App<'static>, FakeModel) {
+    let model = fake_model::text_turns(turns);
+    let agent = AnyAgent::Mock(rig::agent::AgentBuilder::new(model.clone()).build());
+    let app = headless_app_with_agent(agent).await;
+    (app, model)
+}
+
+/// Build a headless `App` around a caller-supplied mock agent. Split out from
+/// [`headless_app`] so a test can install a tool-equipped agent (needed to
+/// script a multi-call run, where the usage accounting bug surfaced).
+async fn headless_app_with_agent(agent: AnyAgent) -> App<'static> {
     isolate_data_dirs();
     let cli: &'static Cli = Box::leak(Box::new(Cli {
         api_key: Some("test-key".to_string()),
@@ -89,9 +103,7 @@ async fn headless_app(turns: Vec<Vec<&str>>) -> (App<'static>, FakeModel) {
         Sandbox::new(false, "bwrap"),
         None,
     );
-    let model = fake_model::text_turns(turns);
-    let agent = AnyAgent::Mock(rig::agent::AgentBuilder::new(model.clone()).build());
-    let app = App::new_headless(
+    App::new_headless(
         ui,
         Some(agent),
         None,
@@ -99,8 +111,7 @@ async fn headless_app(turns: Vec<Vec<&str>>) -> (App<'static>, FakeModel) {
         Box::new(FakeBackend::new(80, 24)),
     )
     .await
-    .expect("build headless app");
-    (app, model)
+    .expect("build headless app")
 }
 
 fn char_key(c: char) -> UserEvent {
@@ -592,6 +603,123 @@ async fn scroll_and_resize_events() {
     }
     app.inject(UserEvent::Resize).await;
     step_until(&mut app, |a| !a.is_scrolling()).await;
+
+    app.teardown().await;
+}
+
+#[derive(Debug, Deserialize)]
+struct EchoArgs {
+    text: String,
+}
+
+/// Minimal tool so a scripted run can make a second model call (a tool-call
+/// turn, then a closing text turn) without going near the network.
+struct EchoTool;
+
+impl Tool for EchoTool {
+    const NAME: &'static str = "echo";
+
+    type Error = ToolError;
+    type Args = EchoArgs;
+    type Output = String;
+
+    fn description(&self) -> String {
+        "Echoes the given text back.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": { "text": { "type": "string" } },
+            "required": ["text"]
+        })
+    }
+
+    async fn call(&self, args: EchoArgs) -> Result<String, ToolError> {
+        Ok(format!("echoed: {}", args.text))
+    }
+}
+
+/// A single model call with real usage: rig emits one `CompletionCall` (that
+/// call's usage) and then a `Done` whose usage is the run *aggregate*. For one
+/// call the two are equal, so the totals must count it once — not twice.
+#[tokio::test]
+async fn a_single_model_call_is_not_double_counted() {
+    let _guard = acquire();
+    let usage = Usage {
+        input_tokens: 1000,
+        output_tokens: 100,
+        ..Usage::new()
+    };
+    let model = MockCompletionModel::from_stream_turns(vec![vec![
+        MockStreamEvent::text("hi".to_string()),
+        MockStreamEvent::final_response(usage),
+    ]]);
+    let agent = AnyAgent::Mock(rig::agent::AgentBuilder::new(model).build());
+    let mut app = headless_app_with_agent(agent).await;
+
+    type_and_submit(&app, "hello").await;
+    step_until(&mut app, |a| a.is_running()).await;
+    step_until(&mut app, |a| !a.is_running()).await;
+
+    assert_eq!(
+        app.session().total_input_tokens,
+        1000,
+        "Done's aggregate must not be re-added on top of the CompletionCall"
+    );
+    assert_eq!(app.session().total_output_tokens, 100);
+
+    app.teardown().await;
+}
+
+/// A two-call run (tool call, then closing text). Totals must sum each call
+/// once, and the context anchor must be the *last* call's prompt — not `Done`'s
+/// aggregate, which sums both prompts and would inflate the context meter.
+#[tokio::test]
+async fn multi_call_run_uses_last_call_usage_for_context_anchor() {
+    let _guard = acquire();
+    let first = Usage {
+        input_tokens: 500,
+        output_tokens: 20,
+        ..Usage::new()
+    };
+    let last = Usage {
+        input_tokens: 900,
+        output_tokens: 30,
+        ..Usage::new()
+    };
+    let model = MockCompletionModel::from_stream_turns(vec![
+        vec![
+            MockStreamEvent::tool_call("call-1", "echo", serde_json::json!({ "text": "x" })),
+            MockStreamEvent::final_response(first),
+        ],
+        vec![
+            MockStreamEvent::text("done".to_string()),
+            MockStreamEvent::final_response(last),
+        ],
+    ]);
+    let agent = AnyAgent::Mock(
+        rig::agent::AgentBuilder::new(model)
+            .tool(EchoTool)
+            .default_max_turns(4)
+            .build(),
+    );
+    let mut app = headless_app_with_agent(agent).await;
+
+    type_and_submit(&app, "go").await;
+    step_until(&mut app, |a| a.is_running()).await;
+    step_until(&mut app, |a| !a.is_running()).await;
+
+    // One sum per call, not `Done`'s aggregate (500+900) added again.
+    assert_eq!(app.session().total_input_tokens, 1400);
+    assert_eq!(app.session().total_output_tokens, 50);
+    // Anchor is the last call's prompt (900) + its output (30), not the
+    // aggregate (1400 + 50).
+    assert_eq!(app.session().calibrated_tokens, 930);
+    assert_eq!(
+        app.session().calibrated_msg_count,
+        app.session().messages.len()
+    );
 
     app.teardown().await;
 }

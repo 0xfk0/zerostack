@@ -262,9 +262,20 @@ pub async fn handle_agent_event(
             if real > ui.session.total_estimated_tokens {
                 ui.session.total_estimated_tokens = real;
             }
-            // Accumulate cost for intermediate calls (tool-use turns). The Done
-            // event only carries the final call's usage, so without this every
-            // tool-call round-trip would go uncosted.
+            // Remember this call's usage for the context anchor that
+            // `handle_agent_done` sets. `Done` carries the run *aggregate*,
+            // which grows with every tool round-trip; only the last call's
+            // prompt is the true current context size.
+            run.last_completion_usage = Some(TurnUsage {
+                input_tokens,
+                output_tokens,
+                cached_input_tokens,
+                cache_creation_input_tokens,
+            });
+            // Token and cost totals are summed per model call here. rig emits
+            // exactly one `CompletionCall` per call (a usage-less provider path
+            // still yields one, zero-valued), so `Done` must NOT add its
+            // aggregate again — doing so would double every total.
             ui.session.total_input_tokens =
                 ui.session.total_input_tokens.saturating_add(input_tokens);
             ui.session.total_output_tokens =
@@ -305,6 +316,7 @@ pub async fn handle_agent_event(
             run.response_start_block = None;
             // A mid-stream error strands whatever was in flight.
             run.clear_pending_tool_calls();
+            run.last_completion_usage = None;
             save_session_if_enabled(ui.session, ui.cli, renderer)?;
         }
     }
@@ -384,42 +396,57 @@ async fn handle_agent_done(
     renderer.write_line("", Color::White)?;
     renderer.write_line("", Color::White)?;
     ui.session.add_message(MessageRole::Assistant, &response);
-    // `total_input_tokens`/`total_output_tokens` keep the raw provider-reported
-    // counts (that's what those fields mean), but cost prices the *billable*
-    // input — for Anthropic that folds in cache reads/writes, which the raw
-    // `input_tokens` excludes yet are still billed (see `billable_input_tokens`).
-    ui.session.total_input_tokens = ui
-        .session
-        .total_input_tokens
-        .saturating_add(usage.input_tokens);
-    ui.session.total_output_tokens = ui
-        .session
-        .total_output_tokens
-        .saturating_add(usage.output_tokens);
-    ui.session.total_cost += crate::pricing::estimate_cost(
-        crate::pricing::billable_input_tokens(
-            ui.cfg.is_anthropic_native(&ui.session.provider),
-            usage.input_tokens,
-            usage.cached_input_tokens,
-            usage.cache_creation_input_tokens,
-        ),
-        usage.output_tokens,
-        ui.session.input_token_cost,
-        ui.session.output_token_cost,
-    );
-    // Anchor context-size accounting to the provider's real usage. Context
-    // measurement needs the full prompt size, so use the cache-inclusive count
-    // (Anthropic reports input_tokens excluding cached/cache-creation tokens,
-    // which would otherwise collapse the context meter to ~0 on cache hits).
-    // Must come after add_message so the anchor includes the just-appended response.
+    // Token and cost totals are accumulated per model call from the
+    // `CompletionCall` events already handled this turn, so `Done`'s usage —
+    // the run *aggregate* — is not added again. The one exception is a turn
+    // that saw no `CompletionCall` at all (a provider path that streams no
+    // usage): then nothing was counted, so fall back to the aggregate once.
+    // `total_input_tokens`/`total_output_tokens` keep the raw counts, while
+    // cost prices the *billable* input — for Anthropic that folds in cache
+    // reads/writes, which the raw `input_tokens` excludes yet are still billed
+    // (see `billable_input_tokens`).
+    let anchor = match run.last_completion_usage {
+        Some(last) => last,
+        None => {
+            ui.session.total_input_tokens = ui
+                .session
+                .total_input_tokens
+                .saturating_add(usage.input_tokens);
+            ui.session.total_output_tokens = ui
+                .session
+                .total_output_tokens
+                .saturating_add(usage.output_tokens);
+            ui.session.total_cost += crate::pricing::estimate_cost(
+                crate::pricing::billable_input_tokens(
+                    ui.cfg.is_anthropic_native(&ui.session.provider),
+                    usage.input_tokens,
+                    usage.cached_input_tokens,
+                    usage.cache_creation_input_tokens,
+                ),
+                usage.output_tokens,
+                ui.session.input_token_cost,
+                ui.session.output_token_cost,
+            );
+            usage
+        }
+    };
+    // Anchor context-size accounting to the *last* model call's prompt, not
+    // `Done`'s aggregate: across a run's tool round-trips the aggregate sums
+    // every intermediate prompt and would push the meter well past the real
+    // context size. Context measurement needs the full prompt size, so use the
+    // cache-inclusive count (Anthropic reports input_tokens excluding
+    // cached/cache-creation tokens, which would otherwise collapse the meter
+    // to ~0 on cache hits). Must come after add_message so the anchor includes
+    // the just-appended response.
     let context_input_tokens = Session::real_input_tokens(
         ui.cfg.is_anthropic_native(&ui.session.provider),
-        usage.input_tokens,
-        usage.cached_input_tokens,
-        usage.cache_creation_input_tokens,
+        anchor.input_tokens,
+        anchor.cached_input_tokens,
+        anchor.cache_creation_input_tokens,
     );
     ui.session
-        .set_calibration(context_input_tokens, usage.output_tokens);
+        .set_calibration(context_input_tokens, anchor.output_tokens);
+    run.last_completion_usage = None;
     run.agent_line_started = false;
     run.response_buf.clear();
     run.response_start_block = None;

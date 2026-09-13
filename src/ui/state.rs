@@ -141,6 +141,15 @@ pub(crate) struct AgentRunState {
     pub was_reasoning: bool,
     pub turn_trace: Vec<CompactString>,
     pub awaiting_compaction_relief: bool,
+    /// Usage of the most recent `CompletionCall` in the current run, if any.
+    ///
+    /// rig emits one `CompletionCall` per model call, each carrying that
+    /// call's own usage, and a terminal `Done` carrying the run's *aggregate*
+    /// across every call. Token/cost accounting is summed per call from
+    /// `CompletionCall` (so it must not re-add `Done`'s aggregate), and the
+    /// context anchor needs this last call's prompt size — not the aggregate,
+    /// which grows with the number of tool round-trips and inflates the meter.
+    pub last_completion_usage: Option<TurnUsage>,
     /// In-flight `ToolCall` events in arrival order: each event's id (rig's
     /// `internal_call_id`) paired with the id `Session::add_tool_call` stamped
     /// for it, removed when the matching `ToolResult` event arrives. Several
