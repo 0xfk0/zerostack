@@ -238,9 +238,11 @@ fn replace_last_updates_final_block() {
     feed.push_line(BlockStyle::Plain, "second");
     feed.replace_last(BlockStyle::Agent, "replaced");
     let lines = feed.lines(80);
-    assert_eq!(lines.len(), 2);
+    assert_eq!(lines.len(), 3);
     assert_eq!(lines[0].text, "first");
-    assert_eq!(lines[1].text, "< replaced");
+    // The replacement opens an agent section, so the layout separates it.
+    assert_eq!(lines[1].text, "");
+    assert_eq!(lines[2].text, "< replaced");
 }
 
 #[test]
@@ -262,6 +264,94 @@ fn truncate_blocks_keeps_prefix() {
     assert_eq!(feed.block_count(), 2);
     let lines = feed.lines(80);
     assert_eq!(lines.len(), 2);
+}
+
+// ── section spacing ─────────────────────────────────────────────────
+//
+// Agent replies and reasoning are separated from whatever precedes them by
+// exactly one blank row, owned by the layout rather than written by callers.
+
+#[test]
+fn agent_after_tool_result_gets_exactly_one_blank() {
+    let mut feed = Feed::new();
+    feed.push_line(BlockStyle::ToolResult, "◈ result (2 chars):\nok");
+    feed.push_line(BlockStyle::Agent, "hi");
+    let lines = feed.lines(80);
+    assert_eq!(
+        lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+        ["◈ result (2 chars):", "ok", "", "< hi"]
+    );
+}
+
+#[test]
+fn reasoning_after_tool_result_gets_one_blank() {
+    let mut feed = Feed::new();
+    feed.push_line(BlockStyle::ToolResult, "◈ result (2 chars):\nok");
+    feed.push_line(BlockStyle::Reasoning, "< thinking");
+    let lines = feed.lines(80);
+    assert_eq!(
+        lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+        ["◈ result (2 chars):", "ok", "", "< thinking"]
+    );
+}
+
+#[test]
+fn no_leading_blank_before_first_section() {
+    let mut feed = Feed::new();
+    feed.push_line(BlockStyle::Agent, "hi");
+    let lines = feed.lines(80);
+    assert_eq!(lines[0].text, "< hi");
+}
+
+#[test]
+fn callers_explicit_blank_is_not_doubled() {
+    let mut feed = Feed::new();
+    feed.push_line(BlockStyle::ToolResult, "ok");
+    feed.push_line(BlockStyle::Plain, "");
+    feed.push_line(BlockStyle::Agent, "hi");
+    let lines = feed.lines(80);
+    assert_eq!(
+        lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+        ["ok", "", "< hi"]
+    );
+}
+
+#[test]
+fn consecutive_agent_blocks_are_separated() {
+    let mut feed = Feed::new();
+    feed.push_line(BlockStyle::Agent, "one");
+    feed.push_line(BlockStyle::Agent, "two");
+    let lines = feed.lines(80);
+    assert_eq!(
+        lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+        ["< one", "", "< two"]
+    );
+}
+
+/// A tool result belongs to the call above it: it must not be split off as a
+/// section of its own, nor the surrounding calls from each other.
+#[test]
+fn tool_call_and_result_stay_together() {
+    let mut feed = Feed::new();
+    feed.push_line(BlockStyle::Tool, "◈ read \"x\"");
+    feed.push_line(BlockStyle::ToolResult, "◈ result (2 chars):\nok");
+    feed.push_line(BlockStyle::Tool, "◈ read \"y\"");
+    let lines = feed.lines(80);
+    assert_eq!(
+        lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+        ["◈ read \"x\"", "◈ result (2 chars):", "ok", "◈ read \"y\""]
+    );
+}
+
+/// The separator is part of the laid-out rows, so scrolling and selection see
+/// the same spacing the viewport draws.
+#[test]
+fn section_separator_is_visible_to_scroll_queries() {
+    let mut feed = Feed::new();
+    feed.push_line(BlockStyle::ToolResult, "ok");
+    feed.push_line(BlockStyle::Agent, "hi");
+    assert_eq!(feed.line_count(80), 3);
+    assert_eq!(feed.selected_text(80, 0, 2).as_deref(), Some("ok\n\n< hi"));
 }
 
 #[test]

@@ -349,3 +349,36 @@ fn blockquotes_still_work() {
     let quoted = styled.iter().any(|e| e.color == Color::DarkGrey);
     assert!(quoted, "blockquote text should be DarkGrey");
 }
+
+#[test]
+fn heading_has_no_trailing_blank() {
+    let styled = markdown_to_styled("# Hello", 80);
+    assert_eq!(styled.len(), 1, "no blank line should follow a heading");
+    assert!(styled[0].text.contains("Hello"));
+}
+
+#[test]
+fn heading_is_preceded_by_one_blank() {
+    let styled = markdown_to_styled("intro\n# Hello", 80);
+    assert_eq!(styled.len(), 3, "blank line should precede the heading");
+    assert_eq!(styled[0].text, "intro");
+    assert!(styled[1].text.is_empty());
+    assert!(styled[2].text.contains("Hello"));
+}
+
+#[test]
+fn consecutive_headings_are_separated() {
+    let styled = markdown_to_styled("# One\n## Two", 80);
+    assert_eq!(styled.len(), 3);
+    assert_eq!(styled[0].text, "One");
+    assert!(styled[1].text.is_empty());
+    assert_eq!(styled[2].text, "Two");
+}
+
+#[test]
+fn paragraph_follows_heading_without_blank() {
+    let styled = markdown_to_styled("# Hello\nbody text", 80);
+    assert_eq!(styled.len(), 2);
+    assert!(styled[0].text.contains("Hello"));
+    assert_eq!(styled[1].text, "body text");
+}

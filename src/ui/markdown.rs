@@ -143,6 +143,14 @@ pub fn markdown_to_styled(text: &str, max_width: usize) -> Vec<LineEntry> {
                 Tag::Heading { .. } => {
                     flush_acc(&acc, Color::White, max_width, &mut result);
                     acc.clear();
+                    if let Some(last) = result.last() {
+                        if !last.text.is_empty() {
+                            result.push(LineEntry {
+                                text: CompactString::new(""),
+                                color: Color::White,
+                            });
+                        }
+                    }
                     in_heading = true;
                 }
                 Tag::CodeBlock(_kind) => {
@@ -207,10 +215,6 @@ pub fn markdown_to_styled(text: &str, max_width: usize) -> Vec<LineEntry> {
                     flush_acc(&acc, Color::Cyan, max_width, &mut result);
                     acc.clear();
                     in_heading = false;
-                    result.push(LineEntry {
-                        text: CompactString::new(""),
-                        color: Color::White,
-                    });
                 }
                 TagEnd::CodeBlock => {
                     for line in acc.split('\n') {

@@ -269,8 +269,20 @@ impl Feed {
 
     /// Lay out every block at `width`. Called by `lines` on a cache miss.
     fn compute_lines(&self, width: usize) -> Vec<LineEntry> {
-        let mut result = Vec::new();
+        let mut result: Vec<LineEntry> = Vec::new();
         for block in &self.blocks {
+            // A section opener gets one blank row before it, unless the feed
+            // is empty or already ends on a blank (so explicit spacer blocks
+            // written by callers are never doubled).
+            if opens_section(block.style)
+                && let Some(last) = result.last()
+                && !last.text.is_empty()
+            {
+                result.push(LineEntry {
+                    text: CompactString::new(""),
+                    color: BlockStyle::Plain.color(),
+                });
+            }
             match block.style {
                 BlockStyle::Agent => {
                     let mut styled = agent_block_lines(block, width);
@@ -399,6 +411,19 @@ impl Feed {
             Some(result)
         }
     }
+}
+
+/// Whether a block style opens a new conversation section, which the layout
+/// separates from the preceding row with a single blank line.
+///
+/// Only agent replies and reasoning qualify: their producers cannot know what
+/// precedes them (a tool result may stream in right before), so the separator
+/// belongs to the layout rather than to each caller. Styles that continue the
+/// current section are excluded — `ToolResult` attaches to the `Tool` call it
+/// answers, the `Welcome` banner is many adjacent blocks, and `Plain` is the
+/// blank spacer itself.
+fn opens_section(style: BlockStyle) -> bool {
+    matches!(style, BlockStyle::Agent | BlockStyle::Reasoning)
 }
 
 /// Lay out an agent block: markdown for completed lines, plain text for the
