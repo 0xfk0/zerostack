@@ -258,7 +258,7 @@ message, and after the response restores the previous prompt and
 
 | Shortcut | Action |
 | -------- | ------ |
-| `Enter` | Send message. With `swap_enter_and_newline`, insert newline instead. |
+| `Enter` | Send message. With `swap_enter_and_newline`, insert newline instead — except when the buffer starts with a slash command, which `Enter` always submits. |
 | `Ctrl+J` | Insert newline. With `swap_enter_and_newline`, send the message instead. |
 | `Alt+Enter` / `Shift+Enter` | Insert newline. |
 | `Ctrl+C` / `Ctrl+D` | Cancel current agent response or quit. |

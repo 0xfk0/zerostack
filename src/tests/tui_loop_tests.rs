@@ -73,6 +73,12 @@ async fn headless_app(turns: Vec<Vec<&str>>) -> (App<'static>, FakeModel) {
 /// [`headless_app`] so a test can install a tool-equipped agent (needed to
 /// script a multi-call run, where the usage accounting bug surfaced).
 async fn headless_app_with_agent(agent: AnyAgent) -> App<'static> {
+    headless_app_with_cfg(agent, Config::default()).await
+}
+
+/// Same as [`headless_app_with_agent`], with a caller-supplied config (e.g. to
+/// turn on `swap_enter_and_newline`).
+async fn headless_app_with_cfg(agent: AnyAgent, cfg: Config) -> App<'static> {
     isolate_data_dirs();
     let cli: &'static Cli = Box::leak(Box::new(Cli {
         api_key: Some("test-key".to_string()),
@@ -80,7 +86,7 @@ async fn headless_app_with_agent(agent: AnyAgent) -> App<'static> {
         no_color: true,
         ..Default::default()
     }));
-    let cfg: &'static Config = Box::leak(Box::new(Config::default()));
+    let cfg: &'static Config = Box::leak(Box::new(cfg));
     let session: &'static mut Session = Box::leak(Box::new(Session::new(
         "anthropic",
         "claude-sonnet-4-5",
@@ -337,6 +343,54 @@ async fn type_slash_and_submit(app: &App<'static>, text: &str) {
     }
     app.inject(enter_key()).await;
     app.inject(enter_key()).await;
+}
+
+/// A headless `App` with `swap_enter_and_newline` on, around an idle mock agent
+/// (no run is expected; the agent is only there to satisfy the constructor).
+async fn swapped_app() -> App<'static> {
+    let model = fake_model::text_turns(Vec::<Vec<&str>>::new());
+    let agent = AnyAgent::Mock(rig::agent::AgentBuilder::new(model).build());
+    headless_app_with_cfg(
+        agent,
+        Config {
+            swap_enter_and_newline: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+/// Regression: with `swap_enter_and_newline`, a slash command in the buffer is
+/// exempt from the swap, so the picker's `Enter` completes `/mode` and a second
+/// `Enter` submits it. Before, the swap applied unconditionally and both Enters
+/// only inserted newlines — no command could be sent.
+#[tokio::test]
+async fn swapped_enter_submits_picked_slash_command() {
+    let _guard = acquire();
+    let mut app = swapped_app().await;
+
+    type_slash_and_submit(&app, "/mode").await;
+    step_until(&mut app, |a| a.feed_text().contains("security mode")).await;
+    assert!(!app.is_running());
+
+    app.teardown().await;
+}
+
+/// Negative control: outside a slash buffer the swap still applies — a lone
+/// `Enter` inserts a newline instead of submitting.
+#[tokio::test]
+async fn swapped_enter_still_newlines_plain_text() {
+    let _guard = acquire();
+    let mut app = swapped_app().await;
+
+    for c in "hello".chars() {
+        app.inject(char_key(c)).await;
+    }
+    app.inject(enter_key()).await;
+    step_until(&mut app, |a| a.input_buffer() == "hello\n").await;
+
+    assert!(!app.is_running());
+    app.teardown().await;
 }
 
 #[tokio::test]
