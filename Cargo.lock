@@ -8835,6 +8835,7 @@ dependencies = [
  "http 1.5.0",
  "ignore",
  "include_dir",
+ "libc",
  "lsp-types",
  "mimalloc",
  "pulldown-cmark",

@@ -262,6 +262,8 @@ message, and after the response restores the previous prompt and
 | `Ctrl+J` | Insert newline. With `swap_enter_and_newline`, send the message instead. |
 | `Alt+Enter` / `Shift+Enter` | Insert newline. |
 | `Ctrl+C` / `Ctrl+D` | Cancel current agent response or quit. With `double_ctrl_d`, `Ctrl-D` needs two presses to quit. |
+| `Ctrl+Z` | Suspend to the shell: the TUI leaves raw mode/alternate screen and the process stops (`SIGTSTP`); resume with `fg`, which restores both on `SIGCONT`. An in-flight provider request may time out while suspended. |
+| `Ctrl+L` | Clear the screen and repaint everything from scratch. |
 | `Ctrl+W` | Delete word backwards. |
 | `Ctrl+U` / `Ctrl+K` | Delete to start / end of line. |
 | `Ctrl+Y` | Yank (paste) the most recently deleted text. |

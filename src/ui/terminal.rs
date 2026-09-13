@@ -52,6 +52,20 @@ where
     f()
 }
 
+/// Stop the current process with `SIGTSTP` (Ctrl-Z job control). The kernel
+/// stops the whole process; resumption arrives later as `SIGCONT`. Must be
+/// called with the terminal restored to cooked mode (see [`suspend_tui`]),
+/// otherwise the shell prompt would inherit raw mode.
+///
+/// The single `unsafe` in the TUI: `raise` only delivers a constant,
+/// well-formed signal number to the calling process.
+#[allow(unsafe_code)]
+pub fn raise_sigtstp() {
+    unsafe {
+        libc::raise(libc::SIGTSTP);
+    }
+}
+
 /// Split an editor command string (e.g. `"code --wait"`) into program + args,
 /// respecting shell quoting. Falls back to treating the whole string as a single
 /// program name if splitting fails or yields empty.

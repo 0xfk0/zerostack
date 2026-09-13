@@ -755,6 +755,40 @@ impl<'a> App<'a> {
                     self.refresh()?;
                     return Ok(ControlFlow::Continue(()));
                 }
+                let is_ctrl_z =
+                    key.code == KeyCode::Char('z') && key.modifiers.contains(KeyModifiers::CONTROL);
+                if is_ctrl_z {
+                    self.ctrl_d_armed = false;
+                    // Only a real terminal can be suspended: in headless tests
+                    // there is no guard and no job control.
+                    if self._terminal_guard.is_some() {
+                        let mouse_capture = self.ui.cfg.resolve_mouse_capture();
+                        // Leave raw mode + alt screen, stop the process, and
+                        // restore both on `SIGCONT` when the shell resumes us.
+                        crate::ui::terminal::suspend_tui(
+                            mouse_capture,
+                            crate::ui::terminal::raise_sigtstp,
+                        );
+                        // The alt screen is wiped before we stop: repaint on
+                        // resume instead of trusting the stale frame.
+                        self.renderer.invalidate();
+                        self.renderer.resize();
+                    }
+                    self.refresh()?;
+                    return Ok(ControlFlow::Continue(()));
+                }
+                let is_ctrl_l =
+                    key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL);
+                if is_ctrl_l {
+                    self.ctrl_d_armed = false;
+                    // Mark both regions dirty so the next frame repaints the
+                    // whole screen over whatever painted outside the tracked
+                    // paths (stray escape output, another program borrowing the
+                    // alt screen). Without this the dirty checks would skip it.
+                    self.renderer.invalidate();
+                    self.refresh()?;
+                    return Ok(ControlFlow::Continue(()));
+                }
                 // Any non-Ctrl-D key cancels a pending two-press quit.
                 self.ctrl_d_armed = false;
 

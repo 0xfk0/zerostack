@@ -149,6 +149,14 @@ fn ctrl_d() -> UserEvent {
     UserEvent::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
 }
 
+fn ctrl_z() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL))
+}
+
+fn ctrl_l() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL))
+}
+
 /// Type `text` into the input editor and submit it with Enter.
 async fn type_and_submit(app: &App<'static>, text: &str) {
     for c in text.chars() {
@@ -393,6 +401,64 @@ async fn ctrl_d_aborts_running_agent_when_enabled() {
         !step_broke(&mut app).await,
         "Ctrl-D while running must not exit"
     );
+    step_until(&mut app, |a| !a.is_running()).await;
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_z_is_swallowed_and_does_not_exit() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![]).await;
+
+    app.inject(ctrl_z()).await;
+    assert!(!step_broke(&mut app).await, "Ctrl-Z must not exit the loop");
+    assert_eq!(app.input_buffer(), "", "Ctrl-Z must not type a literal 'z'");
+
+    // And the buffer is still usable afterwards.
+    app.inject(char_key('a')).await;
+    assert!(!step_broke(&mut app).await);
+    assert_eq!(app.input_buffer(), "a");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_l_repaints_without_typing_or_exiting() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![]).await;
+
+    // Let the first frame land, so the baseline below is a settled screen: an
+    // ordinary refresh is a no-op when nothing changed, which is exactly what
+    // makes the growth assertion meaningful.
+    pump(&mut app).await;
+    let before = app.backend_output().len();
+
+    app.inject(ctrl_l()).await;
+    assert!(!step_broke(&mut app).await, "Ctrl-L must not exit the loop");
+    assert_eq!(app.input_buffer(), "", "Ctrl-L must not type a literal 'l'");
+    assert!(
+        app.backend_output().len() > before,
+        "Ctrl-L must force a repaint of the whole screen"
+    );
+
+    // And the buffer is still usable afterwards.
+    app.inject(char_key('a')).await;
+    assert!(!step_broke(&mut app).await);
+    assert_eq!(app.input_buffer(), "a");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_z_does_not_abort_running_agent() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![vec!["hi there"]]).await;
+
+    type_and_submit(&app, "hello").await;
+    step_until(&mut app, |a| a.is_running()).await;
+
+    app.inject(ctrl_z()).await;
+    assert!(!step_broke(&mut app).await, "Ctrl-Z must not exit");
+    assert!(app.is_running(), "Ctrl-Z must not cancel the running agent");
+
     step_until(&mut app, |a| !a.is_running()).await;
     app.teardown().await;
 }

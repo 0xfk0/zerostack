@@ -303,6 +303,11 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
     );
     write_result(
         ctx.renderer,
+        "  Ctrl+Z                 suspend to shell (fg to resume)",
+    );
+    write_result(ctx.renderer, "  Ctrl+L                 redraw the screen");
+    write_result(
+        ctx.renderer,
         "  mouse scroll           scroll chat (requires mouse_capture)",
     );
 }

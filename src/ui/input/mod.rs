@@ -452,6 +452,12 @@ impl InputEditor {
                     self.yank_pos = None;
                     return None;
                 }
+                // `Ctrl-Z` (job control) and `Ctrl-L` (redraw) are handled by
+                // the app. Swallow them here so neither can fall through to the
+                // generic `Char` arm below and type a literal `z` or `l`.
+                KeyCode::Char('z') | KeyCode::Char('l') => {
+                    return None;
+                }
                 KeyCode::Char('y') => {
                     if self.kill_ring.is_empty() {
                         return None;
