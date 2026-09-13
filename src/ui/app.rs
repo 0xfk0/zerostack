@@ -62,7 +62,7 @@ pub(crate) struct App<'a> {
     btw_inflight: usize,
     /// Whether a first idle `Ctrl-C`/`Ctrl-D` has been pressed and the app is
     /// waiting for a confirming second press to exit (only when
-    /// `double_ctrl_d` is enabled). Any other key clears it.
+    /// `quit_armed` is enabled). Any other key clears it.
     quit_armed: bool,
     btw_next_id: u32,
     btw_total_cost: f64,
@@ -745,7 +745,7 @@ impl<'a> App<'a> {
                         self.renderer.write_line("btw cancelled", C_ERROR)?;
                     } else if self.run.is_running {
                         self.abort_main_run()?;
-                    } else if self.ui.cfg.resolve_double_ctrl_d() && !self.quit_armed {
+                    } else if self.ui.cfg.resolve_quit_armed() && !self.quit_armed {
                         // First idle Ctrl-C/Ctrl-D with the guard enabled: arm
                         // a pending quit instead of exiting. Any other key (see
                         // below) disarms it, so a stray press is harmless.

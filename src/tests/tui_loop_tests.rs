@@ -319,11 +319,11 @@ async fn ctrl_c_exits_main_loop_when_idle() {
 }
 
 #[tokio::test]
-async fn ctrl_d_exits_when_double_ctrl_d_disabled() {
+async fn ctrl_d_exits_when_quit_armed_disabled() {
     let _guard = acquire();
     let (mut app, _model) = headless_app(vec![]).await;
 
-    // Default (`double_ctrl_d` off): a single Ctrl-D quits, as before.
+    // Default (`quit_armed` off): a single Ctrl-D quits, as before.
     app.inject(ctrl_d()).await;
     app.run().await.expect("run should exit on single Ctrl-D");
     app.teardown().await;
@@ -335,7 +335,7 @@ async fn ctrl_d_needs_two_presses_when_enabled() {
     let mut app = headless_app_cfg(
         vec![],
         Config {
-            double_ctrl_d: Some(true),
+            quit_armed: Some(true),
             ..Default::default()
         },
     )
@@ -363,7 +363,7 @@ async fn ctrl_d_disarmed_by_other_key() {
     let mut app = headless_app_cfg(
         vec![],
         Config {
-            double_ctrl_d: Some(true),
+            quit_armed: Some(true),
             ..Default::default()
         },
     )
@@ -391,13 +391,13 @@ async fn ctrl_c_needs_two_presses_when_enabled() {
     let mut app = headless_app_cfg(
         vec![],
         Config {
-            double_ctrl_d: Some(true),
+            quit_armed: Some(true),
             ..Default::default()
         },
     )
     .await;
 
-    // With `double_ctrl_d` on, Ctrl-C is guarded like Ctrl-D.
+    // With `quit_armed` on, Ctrl-C is guarded like Ctrl-D.
     app.inject(ctrl_c()).await;
     assert!(!step_broke(&mut app).await, "first Ctrl-C must not exit");
     assert!(
@@ -419,7 +419,7 @@ async fn ctrl_c_and_ctrl_d_share_the_pending_quit_when_enabled() {
     let mut app = headless_app_cfg(
         vec![],
         Config {
-            double_ctrl_d: Some(true),
+            quit_armed: Some(true),
             ..Default::default()
         },
     )
@@ -442,7 +442,7 @@ async fn ctrl_c_disarmed_by_other_key() {
     let mut app = headless_app_cfg(
         vec![],
         Config {
-            double_ctrl_d: Some(true),
+            quit_armed: Some(true),
             ..Default::default()
         },
     )
@@ -470,7 +470,7 @@ async fn ctrl_d_aborts_running_agent_when_enabled() {
     let mut app = headless_app_cfg(
         vec![vec!["hi there"]],
         Config {
-            double_ctrl_d: Some(true),
+            quit_armed: Some(true),
             ..Default::default()
         },
     )

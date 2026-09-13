@@ -295,7 +295,7 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
     write_result(ctx.renderer, "  Alt+P                  prompt switcher");
     write_result(
         ctx.renderer,
-        if ctx.cfg.resolve_double_ctrl_d() {
+        if ctx.cfg.resolve_quit_armed() {
             "  Ctrl+C / Ctrl+D        interrupt / quit (two presses to quit)"
         } else {
             "  Ctrl+C / Ctrl+D        interrupt/quit"

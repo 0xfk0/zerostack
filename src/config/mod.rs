@@ -171,7 +171,7 @@ pub struct Config {
     /// exits. Default: false (a single press quits, matching the historical
     /// behavior).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub double_ctrl_d: Option<bool>,
+    pub quit_armed: Option<bool>,
     /// Terminal-compatibility folding of `Esc`/`Alt` key sequences. Some
     /// terminals (xterm, the Linux console, GNU screen, mosh, slow SSH links)
     /// deliver `Alt+<key>` as a lone `Esc` followed by the key instead of one
@@ -366,8 +366,8 @@ impl Config {
 
     /// Whether quitting the TUI via `Ctrl-C`/`Ctrl-D` needs two presses.
     /// Default: false.
-    pub fn resolve_double_ctrl_d(&self) -> bool {
-        self.double_ctrl_d.unwrap_or(false)
+    pub fn resolve_quit_armed(&self) -> bool {
+        self.quit_armed.unwrap_or(false)
     }
 
     /// Whether `Esc`-prefixed `Alt` sequences are folded in the event thread
@@ -742,30 +742,30 @@ mouse_capture = false
     }
 
     #[test]
-    fn double_ctrl_d_defaults_off() {
-        assert!(!Config::default().resolve_double_ctrl_d());
+    fn quit_armed_defaults_off() {
+        assert!(!Config::default().resolve_quit_armed());
     }
 
     #[test]
-    fn resolve_double_ctrl_d_reads_config_value() {
+    fn resolve_quit_armed_reads_config_value() {
         let cfg = Config {
-            double_ctrl_d: Some(true),
+            quit_armed: Some(true),
             ..Default::default()
         };
-        assert!(cfg.resolve_double_ctrl_d());
+        assert!(cfg.resolve_quit_armed());
 
         let cfg = Config {
-            double_ctrl_d: Some(false),
+            quit_armed: Some(false),
             ..Default::default()
         };
-        assert!(!cfg.resolve_double_ctrl_d());
+        assert!(!cfg.resolve_quit_armed());
     }
 
     #[test]
-    fn toml_deserializes_double_ctrl_d() {
-        let cfg: Config = toml::from_str("double_ctrl_d = true\n").unwrap();
-        assert_eq!(cfg.double_ctrl_d, Some(true));
-        assert!(cfg.resolve_double_ctrl_d());
+    fn toml_deserializes_quit_armed() {
+        let cfg: Config = toml::from_str("quit_armed = true\n").unwrap();
+        assert_eq!(cfg.quit_armed, Some(true));
+        assert!(cfg.resolve_quit_armed());
     }
 
     #[test]
