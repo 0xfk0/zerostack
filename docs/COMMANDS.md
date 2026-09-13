@@ -256,32 +256,88 @@ message, and after the response restores the previous prompt and
 
 ## Keybindings
 
+Keys are resolved in three layers: **global** bindings work everywhere,
+**prompt-editor** bindings only while the prompt has focus, and **picker**
+bindings only while a picker is open. Lower layers only see keys the upper
+layers did not consume.
+
+### Global (work while typing too)
+
+| Shortcut | Action |
+| -------- | ------ |
+| `Ctrl+C` | Cancel the running response (or a `/btw`), or quit when idle. |
+| `Ctrl+D` | Quit when idle. With `double_ctrl_d`, the first press arms a pending quit and any other key cancels it. |
+| `Ctrl+Z` | Suspend to the shell: the TUI leaves raw mode/alternate screen and the process stops (`SIGTSTP`); resume with `fg`, which restores both on `SIGCONT`. An in-flight provider request may time out while suspended. |
+| `Ctrl+L` | Clear the screen and repaint everything from scratch. |
+| `Ctrl+R` | Toggle reasoning visibility. |
+| `Ctrl+Up` / `Ctrl+Down` | Scroll the transcript one line. |
+| `PageUp` / `PageDown` | Scroll the transcript one page. |
+| `Home` / `End` | Scroll the transcript to the top / bottom. |
+| `Alt+M` | Open the quick-model switcher (`Tab` toggles Quick/Provider, `Enter` applies immediately via `/models <name>`). |
+| `Alt+P` | Open the prompt switcher (`Enter` applies immediately via `/prompt <name>`, including `%%mode=` and `[prompt_to_model]`). |
+| `Ctrl+G` | Open the current input in the system editor (`$EDITOR`). |
+| `Ctrl+H` | Launch `lazygit` (git TUI) in the project directory. |
+| `Esc` | Close the active picker / cancel the current overlay; while a selection is active, clear it. |
+| `y` (with a selection) | Copy the selected text to the clipboard. |
+
+### Mouse (with `mouse_capture`, the default)
+
+| Action | Result |
+| ------ | ------ |
+| Scroll wheel | Scroll the viewport (the prompt editor when it has room, otherwise the transcript). |
+| Left click | Place the prompt cursor, or open a link. |
+| Left drag | Select transcript text. |
+| Left release | Copy the selection to the clipboard. |
+
+### Prompt editor
+
 | Shortcut | Action |
 | -------- | ------ |
 | `Enter` | Send message. With `swap_enter_and_newline`, insert newline instead — except when the buffer starts with a slash command, which `Enter` always submits. |
 | `Ctrl+J` | Insert newline. With `swap_enter_and_newline`, send the message instead. |
 | `Alt+Enter` / `Shift+Enter` | Insert newline. |
-| `Ctrl+C` / `Ctrl+D` | Cancel current agent response or quit. With `double_ctrl_d`, `Ctrl-D` needs two presses to quit. |
-| `Ctrl+Z` | Suspend to the shell: the TUI leaves raw mode/alternate screen and the process stops (`SIGTSTP`); resume with `fg`, which restores both on `SIGCONT`. An in-flight provider request may time out while suspended. |
-| `Ctrl+L` | Clear the screen and repaint everything from scratch. |
-| `Ctrl+W` | Delete word backwards. |
-| `Ctrl+U` / `Ctrl+K` | Delete to start / end of line. |
-| `Ctrl+Y` | Yank (paste) the most recently deleted text. |
-| `Ctrl+A` / `Ctrl+E` | Jump to start / end of line. |
-| `Ctrl+B` / `Ctrl+F` | Move one character left / right. |
-| `Ctrl+P` / `Ctrl+N` | Previous / next line (history on the first / last line). |
-| `Alt+B` / `Alt+F` | Move one word left / right. |
-| `Alt+D` / `Alt+Y` | Delete next word / cycle the kill ring. |
-| `Ctrl+G` | Open the current input in the system editor (`$EDITOR`). |
-| `Ctrl+H` | Launch `lazygit` (git TUI) in the project directory. |
-| `Alt+M` | Open the quick-model switcher (fuzzy filter, `Tab` toggles Quick/Provider, `Enter` applies immediately via `/models <name>`). |
-| `Alt+P` | Open the prompt switcher (fuzzy filter, `Enter` applies immediately via `/prompt <name>`, including `%%mode=` and `[prompt_to_model]`). |
 | `Tab` | Insert two spaces. |
+| `Ctrl+A` / `Ctrl+E` | Jump to the start / end of the line (again: the previous line's end / next line's start). |
+| `Ctrl+B` / `Ctrl+F` | Move one character left / right. |
+| `Alt+B` / `Alt+F` | Move one word left / right. |
+| `Left` / `Right` | Move one character left / right. |
+| `Up` / `Down` | Move the cursor up / down; at the first / last line, previous / next history entry. |
+| `Ctrl+P` / `Ctrl+N` | Same as `Up` / `Down`. |
+| `Backspace` | Delete the character before the cursor. |
+| `Delete` | Delete the character under the cursor. |
+| `Ctrl+W` | Delete word backwards. |
+| `Alt+D` | Delete next word. |
+| `Ctrl+U` / `Ctrl+K` | Delete to the start / end of the buffer. |
+| `Ctrl+Y` | Yank (paste) the most recently deleted text. |
+| `Alt+Y` | Yank-pop: replace the last yank with the previous kill. |
 | `@` at word start | Open the file picker. |
-| `Up / Down` | Navigate command history. |
-| `PageUp / PageDown` | Scroll viewport. |
-| `Home / End` | Scroll to top / bottom. |
-| `Escape` | Close active picker / cancel. |
+| `/` at the start of a line | Open the slash-command picker. |
+| `.` at the start of a line | Open the prompt/preset picker. |
+
+### Pickers
+
+`Up`/`Down` and `Tab`/`Shift+Tab` move the selection, `Enter` accepts it, `Esc`
+cancels, typing filters, and `Backspace` (`Ctrl+H`) deletes a filter character.
+The same keys drive the file (`@`), command (`/`), prompt (`.`/`/prompt`),
+theme, provider, queue and rewind pickers; the model switcher additionally uses
+`Tab` to toggle Quick vs Provider models.
+
+| Picker | Notes |
+| ------ | ----- |
+| File (`@`) | `Enter` replaces `@<query>` with the selected path. |
+| Commands (`/`) | `Enter` inserts the highlighted command; some chain into a sub-picker. |
+| Model switcher (`Alt+M`) | `Enter` applies immediately via `/models <name>`. |
+| Prompt switcher (`Alt+P`) | `Enter` applies immediately via `/prompt <name>`. |
+| Rewind (`/rewind`) | `Up`/`Down` pick a turn, `Enter` confirms, `Esc` goes back / cancels. |
+
+### Modal prompts
+
+| Prompt | Keys |
+| ------ | ---- |
+| Permission request | `y` allow once · `a` allow always (suggests a pattern) · `n` / `Esc` deny. |
+| Chain prompt (brainstorm → plan → code) | `y` accept · `n` decline (won't ask again this session) · `b` add typed guidance; `Esc` leaves guidance mode. |
+| Worktree auto-merge, uncommitted changes | `c` commit all and continue · `a` abort · `Enter` / `Esc` abort. |
+| Worktree merge conflict | `h` let the agent resolve · `l` leave for manual resolution · `a` abort and restore · `Enter` / `Esc` abort. |
 
 ### Inserting a newline
 
@@ -300,3 +356,20 @@ GNU screen, mosh, and the Linux virtual console never forward those sequences,
 so use `Ctrl+J` there. To make `Enter` insert a newline and submit with
 `Ctrl+J` instead, set `swap_enter_and_newline = true` (see
 [CONFIG.md](CONFIG.md)).
+
+### `Alt` keys on terminals without CSI-u
+
+Some terminals cannot send `Alt+<key>` as a single modified key press: xterm
+without `mode-2017`, the Linux virtual console, GNU screen, mosh, and slow SSH
+links instead send a lone `Esc` byte followed by the key byte. Crossterm folds
+the two into `Alt+<key>` only when both arrive in one read, which those
+terminals often prevent — so `Alt+B`, `Alt+F`, `Alt+D`, `Alt+Y`, `Alt+M` and
+`Alt+P` appear dead.
+
+Set `esc_alt_compat = true` (see [CONFIG.md](CONFIG.md)) to have zerostack hold
+a lone `Esc` for 250 ms and fold an immediately following character or `Enter`
+into `Alt` + that key. Inside the same window a second `Esc` collapses into a
+single `Esc`, and any other key releases the held `Esc` first. The flag is off
+by default because holding `Esc` adds up to 250 ms of latency to
+cancel/clear-selection, and because it changes what `Esc` followed quickly by
+another key means.

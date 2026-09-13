@@ -17,10 +17,12 @@ pub(crate) mod utils;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event;
-use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use crossterm::style::Color;
 use tokio::sync::mpsc;
 
@@ -309,12 +311,123 @@ impl PasteBurst {
     }
 }
 
+/// How long a lone `Esc` is held before it is delivered as itself. Terminals
+/// that encode `Alt+<key>` as `ESC` followed by the key byte (xterm, the Linux
+/// console, GNU screen, mosh, slow SSH links) send both bytes back to back, so
+/// a short window catches the pair; a second `Esc` inside the same window
+/// collapses to a single `Esc`. Kept short because a held `Esc` delays
+/// cancel/clear-selection.
+const ESC_PREFIX_WINDOW: Duration = Duration::from_millis(250);
+
+/// Result of feeding one key to [`EscPrefix`].
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum EscVerdict {
+    /// Hold this `Esc`; wait for the next event or for the window to elapse.
+    Pending,
+    /// Dispatch this key only (the held `Esc` became `Alt`, or was collapsed).
+    Key(KeyEvent),
+    /// Dispatch the held `Esc`, then this key unchanged.
+    EscThen(KeyEvent),
+}
+
+/// `Esc`-vs-`Alt` folding for terminals that do not deliver `Alt+<key>` as a
+/// single modified key. Enabled by the `esc_alt_compat` config flag; a no-op
+/// (every key passes straight through) when disabled.
+///
+/// With it on, a lone `Esc` is held for [`ESC_PREFIX_WINDOW`]:
+/// - a following bare character or `Enter` is delivered as `Alt` + that key;
+/// - a following `Esc` collapses the pair into one plain `Esc`;
+/// - any other key — or the window elapsing — releases the held `Esc` first.
+///
+/// `ESC ESC` arriving in a single read is reported by crossterm as `Alt+Esc`
+/// and is likewise collapsed to one plain `Esc`. Pure state machine, unit
+/// tested without a terminal.
+pub(crate) struct EscPrefix {
+    enabled: bool,
+    window: Duration,
+    deadline: Option<Instant>,
+}
+
+impl EscPrefix {
+    pub(crate) fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            window: ESC_PREFIX_WINDOW,
+            deadline: None,
+        }
+    }
+
+    /// Test constructor with a custom hold window.
+    #[cfg(test)]
+    pub(crate) fn with_window(enabled: bool, window: Duration) -> Self {
+        Self {
+            enabled,
+            window,
+            deadline: None,
+        }
+    }
+
+    /// The plain `Esc` this machine emits.
+    fn esc() -> KeyEvent {
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    /// Poll timed out: release a held `Esc` once its window has elapsed.
+    pub(crate) fn on_timeout(&mut self) -> Option<KeyEvent> {
+        match self.deadline {
+            Some(dl) if Instant::now() >= dl => {
+                self.deadline = None;
+                Some(Self::esc())
+            }
+            _ => None,
+        }
+    }
+
+    /// Release a held `Esc` immediately (a non-key event arrived).
+    pub(crate) fn flush(&mut self) -> Option<KeyEvent> {
+        self.deadline.take().map(|_| Self::esc())
+    }
+
+    pub(crate) fn on_key(&mut self, key: KeyEvent) -> EscVerdict {
+        if !self.enabled {
+            return EscVerdict::Key(key);
+        }
+
+        // Double `Esc` → one plain `Esc`: either a second `Esc` while one is
+        // held, or `ESC ESC` read at once (which crossterm reports as Alt+Esc).
+        if key.code == KeyCode::Esc {
+            if self.deadline.take().is_some() || key.modifiers.contains(KeyModifiers::ALT) {
+                return EscVerdict::Key(Self::esc());
+            }
+            self.deadline = Some(Instant::now() + self.window);
+            return EscVerdict::Pending;
+        }
+
+        if let Some(dl) = self.deadline.take() {
+            // A bare character/`Enter` inside the window is `Alt` + that key;
+            // past the window, a modified key, or any other key means the `Esc`
+            // stood alone, so deliver it before the key.
+            if Instant::now() < dl
+                && key.modifiers.is_empty()
+                && matches!(key.code, KeyCode::Char(_) | KeyCode::Enter)
+            {
+                return EscVerdict::Key(KeyEvent::new(key.code, KeyModifiers::ALT));
+            }
+            return EscVerdict::EscThen(key);
+        }
+
+        EscVerdict::Key(key)
+    }
+}
+
 pub(crate) fn spawn_event_thread(
     user_tx: mpsc::Sender<UserEvent>,
     running: Arc<AtomicBool>,
+    esc_alt_compat: bool,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut paste_burst = PasteBurst::default();
+        let mut esc_prefix = EscPrefix::new(esc_alt_compat);
         while running.load(Ordering::Relaxed) {
             let Ok(ready) = event::poll(paste_burst.wait_timeout()) else {
                 // Stdin is gone (e.g. the parent terminal quit) — poll()
@@ -324,12 +437,39 @@ pub(crate) fn spawn_event_thread(
             };
             if !ready {
                 paste_burst.on_timeout();
+                if let Some(esc) = esc_prefix.on_timeout()
+                    && user_tx.blocking_send(UserEvent::Key(esc)).is_err()
+                {
+                    break;
+                }
                 continue;
             }
-            match event::read() {
-                Ok(event::Event::Key(key)) => {
+            let Ok(raw) = event::read() else { break };
+            // A held `Esc` is resolved by the next key (below); any other
+            // event means it stood alone, so release it first.
+            if !matches!(raw, event::Event::Key(_))
+                && let Some(esc) = esc_prefix.flush()
+                && user_tx.blocking_send(UserEvent::Key(esc)).is_err()
+            {
+                break;
+            }
+            match raw {
+                event::Event::Key(key) => {
                     if key.kind != KeyEventKind::Press {
                         continue;
+                    }
+                    // Fold a lone `Esc` + key into `Alt+key`, and a double
+                    // `Esc` into a single one, when `esc_alt_compat` is on.
+                    // The held `Esc`, if any, is released first, in order.
+                    let (held, key) = match esc_prefix.on_key(key) {
+                        EscVerdict::Pending => continue,
+                        EscVerdict::Key(k) => (None, k),
+                        EscVerdict::EscThen(k) => (Some(EscPrefix::esc()), k),
+                    };
+                    if let Some(esc) = held
+                        && user_tx.blocking_send(UserEvent::Key(esc)).is_err()
+                    {
+                        break;
                     }
                     // A paste-newline key (bare Enter, or Ctrl+J — a raw
                     // pasted '\n' on Unix) is either a submit/normal key or
@@ -352,7 +492,7 @@ pub(crate) fn spawn_event_thread(
                         break;
                     }
                 }
-                Ok(event::Event::Mouse(m)) => match m.kind {
+                event::Event::Mouse(m) => match m.kind {
                     MouseEventKind::ScrollUp => {
                         if user_tx.blocking_send(UserEvent::ScrollUp).is_err() {
                             break;
@@ -383,17 +523,16 @@ pub(crate) fn spawn_event_thread(
                     }
                     _ => {}
                 },
-                Ok(event::Event::Resize(_cols, _rows)) => {
+                event::Event::Resize(_cols, _rows) => {
                     let _ = user_tx.blocking_send(UserEvent::Resize);
                 }
-                Ok(event::Event::Paste(data)) => {
+                event::Event::Paste(data) => {
                     let _ = user_tx.blocking_send(UserEvent::Paste(data));
                 }
-                Ok(event::Event::FocusGained) => {
+                event::Event::FocusGained => {
                     let _ = user_tx.blocking_send(UserEvent::FocusGained);
                 }
-                Ok(event::Event::FocusLost) => {}
-                Err(_) => break,
+                event::Event::FocusLost => {}
             }
         }
         // Let the app loop know this thread is gone so it can shut down

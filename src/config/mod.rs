@@ -172,6 +172,16 @@ pub struct Config {
     /// (single `Ctrl-D` quits, matching the historical behavior).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub double_ctrl_d: Option<bool>,
+    /// Terminal-compatibility folding of `Esc`/`Alt` key sequences. Some
+    /// terminals (xterm, the Linux console, GNU screen, mosh, slow SSH links)
+    /// deliver `Alt+<key>` as a lone `Esc` followed by the key instead of one
+    /// modified key press, and deliver a double-tapped `Esc` as two events.
+    /// When `true`, a lone `Esc` is held for ~250 ms: a following character or
+    /// `Enter` becomes `Alt` + that key, a second `Esc` collapses into a single
+    /// `Esc`, and any other key releases the held `Esc` first. Default: false
+    /// (keys pass through exactly as the terminal sends them).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub esc_alt_compat: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_prompt: Option<CompactString>,
     #[cfg(feature = "git-worktree")]
@@ -357,6 +367,12 @@ impl Config {
     /// Whether quitting the TUI via `Ctrl-D` needs two presses. Default: false.
     pub fn resolve_double_ctrl_d(&self) -> bool {
         self.double_ctrl_d.unwrap_or(false)
+    }
+
+    /// Whether `Esc`-prefixed `Alt` sequences are folded in the event thread
+    /// (see `esc_alt_compat`). Default: false.
+    pub fn resolve_esc_alt_compat(&self) -> bool {
+        self.esc_alt_compat.unwrap_or(false)
     }
 
     /// Resolves temperature: CLI `--temperature` > quick-model `temperature` >
@@ -749,5 +765,23 @@ mouse_capture = false
         let cfg: Config = toml::from_str("double_ctrl_d = true\n").unwrap();
         assert_eq!(cfg.double_ctrl_d, Some(true));
         assert!(cfg.resolve_double_ctrl_d());
+    }
+
+    #[test]
+    fn esc_alt_compat_defaults_off() {
+        assert!(!Config::default().resolve_esc_alt_compat());
+    }
+
+    #[test]
+    fn esc_alt_compat_reads_config_value() {
+        let cfg = Config {
+            esc_alt_compat: Some(true),
+            ..Default::default()
+        };
+        assert!(cfg.resolve_esc_alt_compat());
+
+        let cfg: Config = toml::from_str("esc_alt_compat = true\n").unwrap();
+        assert_eq!(cfg.esc_alt_compat, Some(true));
+        assert!(cfg.resolve_esc_alt_compat());
     }
 }

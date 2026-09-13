@@ -388,7 +388,11 @@ impl<'a> App<'a> {
         // Headless tests drive the loop via `inject`, so no crossterm reader.
         let event_handle = match headless {
             true => None,
-            false => Some(spawn_event_thread(user_tx.clone(), running.clone())),
+            false => Some(spawn_event_thread(
+                user_tx.clone(),
+                running.clone(),
+                ui.cfg.resolve_esc_alt_compat(),
+            )),
         };
 
         let (prebuild_tx, prebuild_rx_raw) = mpsc::channel::<PrebuildPayload>(1);
@@ -2107,6 +2111,7 @@ impl<'a> App<'a> {
         self.event_handle = Some(spawn_event_thread(
             self.user_tx.clone(),
             self.running.clone(),
+            self.ui.cfg.resolve_esc_alt_compat(),
         ));
     }
 
