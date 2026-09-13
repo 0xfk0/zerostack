@@ -165,6 +165,13 @@ pub struct Config {
     /// sends, `Ctrl+J` inserts a newline).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub swap_enter_and_newline: Option<bool>,
+    /// Whether quitting the TUI with `Ctrl-D` requires two presses. When
+    /// `true`, the first press arms a pending quit and prints a hint; any
+    /// other key cancels it, a second consecutive `Ctrl-D` exits. `Ctrl-C` is
+    /// unaffected and always quits immediately when idle. Default: false
+    /// (single `Ctrl-D` quits, matching the historical behavior).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub double_ctrl_d: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_prompt: Option<CompactString>,
     #[cfg(feature = "git-worktree")]
@@ -345,6 +352,11 @@ impl Config {
     /// Default `false`: `Enter` submits and `Ctrl+J` inserts a newline.
     pub fn resolve_swap_enter_and_newline(&self) -> bool {
         self.swap_enter_and_newline.unwrap_or(false)
+    }
+
+    /// Whether quitting the TUI via `Ctrl-D` needs two presses. Default: false.
+    pub fn resolve_double_ctrl_d(&self) -> bool {
+        self.double_ctrl_d.unwrap_or(false)
     }
 
     /// Resolves temperature: CLI `--temperature` > quick-model `temperature` >
@@ -710,5 +722,32 @@ mouse_capture = false
             ..Default::default()
         };
         assert!(!cfg.resolve_swap_enter_and_newline());
+    }
+
+    #[test]
+    fn double_ctrl_d_defaults_off() {
+        assert!(!Config::default().resolve_double_ctrl_d());
+    }
+
+    #[test]
+    fn resolve_double_ctrl_d_reads_config_value() {
+        let cfg = Config {
+            double_ctrl_d: Some(true),
+            ..Default::default()
+        };
+        assert!(cfg.resolve_double_ctrl_d());
+
+        let cfg = Config {
+            double_ctrl_d: Some(false),
+            ..Default::default()
+        };
+        assert!(!cfg.resolve_double_ctrl_d());
+    }
+
+    #[test]
+    fn toml_deserializes_double_ctrl_d() {
+        let cfg: Config = toml::from_str("double_ctrl_d = true\n").unwrap();
+        assert_eq!(cfg.double_ctrl_d, Some(true));
+        assert!(cfg.resolve_double_ctrl_d());
     }
 }

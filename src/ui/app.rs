@@ -60,6 +60,10 @@ pub(crate) struct App<'a> {
     btw_rx: mpsc::Receiver<BtwEvent>,
     btw_abort: Vec<(u32, tokio::task::AbortHandle)>,
     btw_inflight: usize,
+    /// Whether a first `Ctrl-D` has been pressed while idle and the app is
+    /// waiting for a confirming second press to exit (only when
+    /// `double_ctrl_d` is enabled). Any other key clears it.
+    ctrl_d_armed: bool,
     btw_next_id: u32,
     btw_total_cost: f64,
     btw_total_in: u64,
@@ -449,6 +453,7 @@ impl<'a> App<'a> {
             btw_rx,
             btw_abort: Vec::new(),
             btw_inflight: 0,
+            ctrl_d_armed: false,
             btw_next_id: 0,
             btw_total_cost: 0.0,
             btw_total_in: 0,
@@ -736,12 +741,22 @@ impl<'a> App<'a> {
                         self.renderer.write_line("btw cancelled", C_ERROR)?;
                     } else if self.run.is_running {
                         self.abort_main_run()?;
+                    } else if is_ctrl_d && self.ui.cfg.resolve_double_ctrl_d() && !self.ctrl_d_armed
+                    {
+                        // First idle Ctrl-D with the guard enabled: arm a
+                        // pending quit instead of exiting. Any other key (see
+                        // below) disarms it, so a stray Ctrl-D is harmless.
+                        self.ctrl_d_armed = true;
+                        self.renderer
+                            .write_line("Press Ctrl-D again to exit", C_ERROR)?;
                     } else {
                         return Ok(ControlFlow::Break(()));
                     }
                     self.refresh()?;
                     return Ok(ControlFlow::Continue(()));
                 }
+                // Any non-Ctrl-D key cancels a pending two-press quit.
+                self.ctrl_d_armed = false;
 
                 if let Err(e) = self.handle_key_event(key).await {
                     if e.downcast_ref::<std::io::Error>()

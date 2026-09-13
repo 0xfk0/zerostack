@@ -22,6 +22,7 @@
 #![allow(clippy::await_holding_lock)]
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -120,12 +121,32 @@ async fn headless_app_with_cfg(agent: AnyAgent, cfg: Config) -> App<'static> {
     .expect("build headless app")
 }
 
+/// Like [`headless_app`], with a caller-supplied config.
+async fn headless_app_cfg(turns: Vec<Vec<&str>>, cfg: Config) -> App<'static> {
+    let model = fake_model::text_turns(turns);
+    let agent = AnyAgent::Mock(rig::agent::AgentBuilder::new(model).build());
+    headless_app_with_cfg(agent, cfg).await
+}
+
+/// Pump one step and report whether the loop asked to exit (`Break`).
+async fn step_broke(app: &mut App<'static>) -> bool {
+    match tokio::time::timeout(std::time::Duration::from_millis(250), app.step()).await {
+        Ok(Ok(cf)) => matches!(cf, ControlFlow::Break(())),
+        Ok(Err(e)) => panic!("step failed: {e}"),
+        Err(_) => false,
+    }
+}
+
 fn char_key(c: char) -> UserEvent {
     UserEvent::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
 }
 
 fn enter_key() -> UserEvent {
     UserEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+}
+
+fn ctrl_d() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
 }
 
 /// Type `text` into the input editor and submit it with Enter.
@@ -282,6 +303,97 @@ async fn ctrl_c_exits_main_loop_when_idle() {
 
     // The full `run()` returns cleanly once the loop breaks on Ctrl-C.
     app.run().await.expect("run should exit on Ctrl-C");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_d_exits_when_double_ctrl_d_disabled() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![]).await;
+
+    // Default (`double_ctrl_d` off): a single Ctrl-D quits, as before.
+    app.inject(ctrl_d()).await;
+    app.run().await.expect("run should exit on single Ctrl-D");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_d_needs_two_presses_when_enabled() {
+    let _guard = acquire();
+    let mut app = headless_app_cfg(
+        vec![],
+        Config {
+            double_ctrl_d: Some(true),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // First press arms a pending quit and prints a hint; loop stays alive.
+    app.inject(ctrl_d()).await;
+    assert!(!step_broke(&mut app).await, "first Ctrl-D must not exit");
+    assert!(
+        app.feed_text().contains("Press Ctrl-D again to exit"),
+        "hint should be shown: {}",
+        app.feed_text()
+    );
+
+    // Second consecutive press exits.
+    app.inject(ctrl_d()).await;
+    assert!(step_broke(&mut app).await, "second Ctrl-D must exit");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_d_disarmed_by_other_key() {
+    let _guard = acquire();
+    let mut app = headless_app_cfg(
+        vec![],
+        Config {
+            double_ctrl_d: Some(true),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    app.inject(ctrl_d()).await;
+    assert!(!step_broke(&mut app).await, "first Ctrl-D must not exit");
+
+    // Any other key (here: a literal char) cancels the pending quit.
+    app.inject(char_key('x')).await;
+    assert!(!step_broke(&mut app).await);
+
+    // So the next Ctrl-D only re-arms rather than exiting.
+    app.inject(ctrl_d()).await;
+    assert!(
+        !step_broke(&mut app).await,
+        "Ctrl-D after a disarming key must only re-arm"
+    );
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_d_aborts_running_agent_when_enabled() {
+    let _guard = acquire();
+    let mut app = headless_app_cfg(
+        vec![vec!["hi there"]],
+        Config {
+            double_ctrl_d: Some(true),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    type_and_submit(&app, "hello").await;
+    step_until(&mut app, |a| a.is_running()).await;
+
+    // Ctrl-D while running aborts the run, never quits.
+    app.inject(ctrl_d()).await;
+    assert!(
+        !step_broke(&mut app).await,
+        "Ctrl-D while running must not exit"
+    );
+    step_until(&mut app, |a| !a.is_running()).await;
     app.teardown().await;
 }
 

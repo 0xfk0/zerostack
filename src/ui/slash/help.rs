@@ -293,7 +293,14 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
         "  Alt+M                  quick-model switcher",
     );
     write_result(ctx.renderer, "  Alt+P                  prompt switcher");
-    write_result(ctx.renderer, "  Ctrl+C / Ctrl+D        interrupt/quit");
+    write_result(
+        ctx.renderer,
+        if ctx.cfg.resolve_double_ctrl_d() {
+            "  Ctrl+C / Ctrl+D        interrupt / quit (Ctrl-D needs two presses)"
+        } else {
+            "  Ctrl+C / Ctrl+D        interrupt/quit"
+        },
+    );
     write_result(
         ctx.renderer,
         "  mouse scroll           scroll chat (requires mouse_capture)",
