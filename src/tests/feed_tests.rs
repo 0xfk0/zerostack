@@ -1,4 +1,5 @@
-use crate::ui::feed::{BlockStyle, Feed};
+use crate::ui::feed::{BlockStyle, Feed, markdown_role};
+use crate::ui::roles::{ROLES_GUARD, apply, default_color, reset};
 use crossterm::style::Color;
 
 #[test]
@@ -13,6 +14,71 @@ fn block_style_color_mapping() {
     assert_eq!(BlockStyle::Welcome.color(), Color::Cyan);
     assert_eq!(BlockStyle::Permission.color(), Color::Magenta);
     assert_eq!(BlockStyle::Plain.color(), Color::White);
+    assert_eq!(BlockStyle::Code.color(), Color::DarkYellow);
+    assert_eq!(BlockStyle::Link.color(), Color::DarkCyan);
+}
+
+/// Remapping the markdown palette onto roles must be a no-op until a theme
+/// overrides one, i.e. every mapped role's *default* is the parser's color.
+#[test]
+fn markdown_palette_maps_to_matching_roles() {
+    for (color, role) in [
+        (Color::White, BlockStyle::Agent),
+        (Color::DarkGrey, BlockStyle::System),
+        (Color::Cyan, BlockStyle::Welcome),
+        (Color::DarkYellow, BlockStyle::Code),
+        (Color::DarkCyan, BlockStyle::Link),
+    ] {
+        assert_eq!(markdown_role(color), Some(role), "mapping for {color:?}");
+        assert_eq!(
+            default_color(role),
+            color,
+            "{role:?}'s default drifted from the parser color"
+        );
+    }
+
+    // Anything the parser did not hardcode passes through untouched.
+    assert_eq!(markdown_role(Color::Red), None);
+    assert_eq!(markdown_role(Color::Reset), None);
+}
+
+/// Markdown text is laid out with the parser's hardcoded palette, so a theme's
+/// role overrides only reach replies if the layout step remaps them.
+#[test]
+fn markdown_colors_follow_role_overrides() {
+    let _guard = ROLES_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+    let dark = Color::Rgb {
+        r: 0x11,
+        g: 0x22,
+        b: 0x33,
+    };
+    let roles: std::collections::HashMap<String, String> =
+        ["agent", "system", "welcome", "code", "link"]
+            .into_iter()
+            .map(|name| (name.to_string(), "#112233".to_string()))
+            .collect();
+    apply(&roles);
+
+    // One block per palette entry: heading (Cyan), body (White), quote
+    // (DarkGrey), fenced code (DarkYellow), link text (DarkCyan).
+    let mut feed = Feed::new();
+    feed.push_line(
+        BlockStyle::Agent,
+        "# Head\n\nbody\n\n> quoted\n\n```\ncode\n```\n\n[link](https://example.com)\n",
+    );
+    let lines = feed.lines(40);
+
+    assert!(!lines.is_empty());
+    for line in &lines {
+        assert_eq!(
+            line.color, dark,
+            "markdown color escaped the theme: {:?} -> {:?}",
+            line.text, line.color
+        );
+    }
+
+    reset();
 }
 
 #[test]

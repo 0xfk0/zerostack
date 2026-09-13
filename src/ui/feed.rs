@@ -23,6 +23,11 @@ pub enum BlockStyle {
     Welcome,
     Permission,
     Plain,
+    /// Markdown-only slot for fenced code blocks. No feed block uses it; it
+    /// exists so code follows the theme instead of a hardcoded color.
+    Code,
+    /// Markdown-only slot for link text. No feed block uses it.
+    Link,
 }
 
 impl BlockStyle {
@@ -441,7 +446,38 @@ fn agent_block_lines(block: &Block, width: usize) -> Vec<LineEntry> {
             }
         }
     }
+
+    // The markdown parser hardcodes its own palette and knows nothing about
+    // `[colors.roles]`/themes, so replies stay bright white whatever the
+    // terminal background. Remap each hardcoded color to the role that owns
+    // it, so the active theme governs markdown too. Applied at layout time so
+    // the memoized parse cache keeps the parser's raw colors and a role change
+    // still wins over a cached layout.
+    for line in lines.iter_mut() {
+        if let Some(role) = markdown_role(line.color) {
+            line.color = role.color();
+        }
+    }
+
     lines
+}
+
+/// Which role owns a color the markdown parser emitted, or `None` for a color
+/// that is already theme-independent.
+///
+/// Everything the parser hardcodes has a role whose *default* is that exact
+/// color (`ui::roles::default_color`), so remapping leaves an unthemed run
+/// pixel-identical while letting `[colors.roles]`/themes restyle markdown.
+/// `feed_tests::markdown_palette_maps_to_matching_roles` pins that invariant.
+pub(crate) fn markdown_role(color: Color) -> Option<BlockStyle> {
+    match color {
+        Color::White => Some(BlockStyle::Agent), // paragraph/list/table body
+        Color::DarkGrey => Some(BlockStyle::System), // quote, rule, table borders
+        Color::Cyan => Some(BlockStyle::Welcome), // heading
+        Color::DarkYellow => Some(BlockStyle::Code), // fenced code
+        Color::DarkCyan => Some(BlockStyle::Link), // link text
+        _ => None,
+    }
 }
 
 /// Return the memoized markdown layout when it matches `(width, parsed_len)`.

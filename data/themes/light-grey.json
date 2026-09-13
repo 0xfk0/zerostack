@@ -1,0 +1,20 @@
+{
+  "scheme_type": "full",
+  "chat_background": "#E0E0E0",
+  "input_background": "#E0E0E0",
+  "status_background": "#CFCFCF",
+  "roles": {
+    "user": "#0B5D1E",
+    "agent": "#1A1A1A",
+    "reasoning": "#3E4A56",
+    "tool": "#6B4400",
+    "tool_result": "#3E4A56",
+    "error": "#8E0B14",
+    "system": "#3E4A56",
+    "welcome": "#03468F",
+    "permission": "#4B2E9E",
+    "plain": "#1A1A1A",
+    "code": "#5F3D00",
+    "link": "#0A4F5C"
+  }
+}

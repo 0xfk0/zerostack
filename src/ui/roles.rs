@@ -19,6 +19,12 @@ use super::{C_AGENT, C_ERROR, C_PERM, C_TOOL};
 
 static ROLE_OVERRIDES: RwLock<Option<HashMap<BlockStyle, Color>>> = RwLock::new(None);
 
+/// Serializes tests that mutate [`ROLE_OVERRIDES`]: the overrides are
+/// process-global and `cargo test` runs tests in parallel, so a test that
+/// applies roles could otherwise observe (or clobber) another's palette.
+#[cfg(test)]
+pub(crate) static ROLES_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The built-in palette, used for any role without a configured override.
 pub(crate) fn default_color(role: BlockStyle) -> Color {
     match role {
@@ -32,6 +38,10 @@ pub(crate) fn default_color(role: BlockStyle) -> Color {
         BlockStyle::Welcome => Color::Cyan,
         BlockStyle::Permission => C_PERM,
         BlockStyle::Plain => Color::White,
+        // Markdown-only slots. Defaults are the markdown parser's hardcoded
+        // colors, so an unthemed run is pixel-identical to before.
+        BlockStyle::Code => Color::DarkYellow,
+        BlockStyle::Link => Color::DarkCyan,
     }
 }
 
@@ -59,6 +69,8 @@ fn role_from_name(name: &str) -> Option<BlockStyle> {
         "welcome" => Some(BlockStyle::Welcome),
         "permission" => Some(BlockStyle::Permission),
         "plain" => Some(BlockStyle::Plain),
+        "code" => Some(BlockStyle::Code),
+        "link" => Some(BlockStyle::Link),
         _ => None,
     }
 }
@@ -111,6 +123,7 @@ mod tests {
 
     #[test]
     fn overrides_apply_and_reset() {
+        let _guard = super::ROLES_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         reset();
         assert_eq!(color(BlockStyle::Tool), default_color(BlockStyle::Tool));
 

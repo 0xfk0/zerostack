@@ -791,10 +791,11 @@ Controls the terminal color escape sequences emitted. Two values:
 - `status_background` — background color for the status bar (lowest line).
 - `roles` — map of semantic role → color, overriding the default palette for
   conversation blocks. Known roles: `user`, `agent`, `reasoning`, `tool`,
-  `tool_result`, `error`, `system`, `welcome`, `permission`, `plain`. Unknown
-  roles and unparsable colors are ignored with a warning. Roles work in theme
-  files too (same `colors` object); a theme without a `roles` map restores
-  the default palette.
+  `tool_result`, `error`, `system`, `welcome`, `permission`, `plain`, plus the
+  markdown-only slots `code` (fenced code blocks) and `link` (link text).
+  Unknown roles and unparsable colors are ignored with a warning. Roles work in
+  theme files too (same `colors` object); a theme without a `roles` map
+  restores the default palette.
 
 Supported named colors: `reset`, `black`, `red`, `green`, `yellow`, `blue`,
 `magenta`, `cyan`, `white`, `grey`, `dark_grey`, `dark_red`, `dark_green`,
