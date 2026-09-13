@@ -17,6 +17,32 @@ use crate::ui::pickers::rewind::{RewindOutcome, RewindPicker};
 
 const MAX_KILL_RING: usize = 30;
 
+/// Exchange the `Enter` and `Ctrl+J` key events when the
+/// `swap_enter_and_newline` setting is on.
+///
+/// [`InputEditor::handle_key`] always reads a bare `Enter` as "submit" and
+/// `Ctrl+J` as "insert newline". Swapping the events before dispatch inverts
+/// the two bindings without teaching the editor about configuration, so both
+/// orderings share one code path. Any other key — and any modified `Enter`
+/// (`Shift`/`Alt`, which stay literal newlines) — passes through unchanged.
+pub fn swap_enter_and_newline(key: KeyEvent) -> KeyEvent {
+    if key.code == KeyCode::Enter && key.modifiers == KeyModifiers::NONE {
+        KeyEvent {
+            code: KeyCode::Char('j'),
+            modifiers: KeyModifiers::CONTROL,
+            ..key
+        }
+    } else if key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::CONTROL {
+        KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            ..key
+        }
+    } else {
+        key
+    }
+}
+
 pub struct InputEditor {
     pub buffer: CompactString,
     pub cursor: usize,
@@ -517,6 +543,20 @@ impl InputEditor {
                 self.cursor = 0;
                 self.yank_pos = None;
                 if text.is_empty() { None } else { Some(text) }
+            }
+            // `Ctrl+J` (byte 0x0A) is the portable "insert newline" key: every
+            // terminal can encode it as a plain control byte, unlike the
+            // `Shift`/`Alt+Enter` chords which need the Kitty keyboard
+            // protocol (#197 follow-up). A lone `Ctrl+J` used to fall through
+            // to the generic `Char` arm below and type a literal `j`.
+            KeyCode::Char('j') if ctrl => {
+                if self.picker.as_ref().is_some_and(|p| p.active()) {
+                    return None;
+                }
+                self.buffer.insert(self.cursor, '\n');
+                self.cursor += 1;
+                self.yank_pos = None;
+                None
             }
             KeyCode::Char(c)
                 if c == '\x08' || (c == 'h' && key.modifiers.contains(KeyModifiers::CONTROL)) =>

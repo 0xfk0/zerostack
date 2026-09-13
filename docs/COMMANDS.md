@@ -258,7 +258,8 @@ message, and after the response restores the previous prompt and
 
 | Shortcut | Action |
 | -------- | ------ |
-| `Enter` | Send message. |
+| `Enter` | Send message. With `swap_enter_and_newline`, insert newline instead. |
+| `Ctrl+J` | Insert newline. With `swap_enter_and_newline`, send the message instead. |
 | `Alt+Enter` / `Shift+Enter` | Insert newline. |
 | `Ctrl+C` / `Ctrl+D` | Cancel current agent response or quit. |
 | `Ctrl+W` | Delete word backwards. |
@@ -279,3 +280,21 @@ message, and after the response restores the previous prompt and
 | `PageUp / PageDown` | Scroll viewport. |
 | `Home / End` | Scroll to top / bottom. |
 | `Escape` | Close active picker / cancel. |
+
+### Inserting a newline
+
+`Ctrl+J` inserts a newline in every terminal, because it is the plain control
+byte `0x0A` rather than a key chord that has to be encoded in a CSI-u
+sequence. `Alt+Enter` and `Shift+Enter` insert a newline only where the
+terminal forwards a distinguishable `Enter` — kitty, wezterm, foot, Ghostty,
+xterm with `mode-2017` support, and tmux 3.5+ configured with:
+
+```
+set -g extended-keys always
+set -g extended-keys-format csi-u
+```
+
+GNU screen, mosh, and the Linux virtual console never forward those sequences,
+so use `Ctrl+J` there. To make `Enter` insert a newline and submit with
+`Ctrl+J` instead, set `swap_enter_and_newline = true` (see
+[CONFIG.md](CONFIG.md)).

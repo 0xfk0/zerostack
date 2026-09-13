@@ -1,8 +1,16 @@
-use crate::ui::input::InputEditor;
+use crate::ui::input::{InputEditor, swap_enter_and_newline};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 fn press(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::empty())
+}
+
+fn press_with(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+    KeyEvent::new(code, modifiers)
+}
+
+fn ctrl_j() -> KeyEvent {
+    press_with(KeyCode::Char('j'), KeyModifiers::CONTROL)
 }
 
 fn type_str(editor: &mut InputEditor, s: &str) {
@@ -79,5 +87,81 @@ fn enter_returns_buffer_and_resets() {
     let out = editor.handle_key(press(KeyCode::Enter)).unwrap();
     assert_eq!(out.as_str(), "hei på");
     assert_eq!(editor.cursor, 0);
+    assert_eq!(editor.buffer.as_str(), "");
+}
+
+/// `Ctrl+J` is the portable newline key. It must insert `'\n'` rather than fall
+/// through to the generic `Char` arm and type a literal `j`.
+#[test]
+fn ctrl_j_inserts_newline_instead_of_literal_j() {
+    let mut editor = InputEditor::new();
+    type_str(&mut editor, "one");
+    assert!(
+        editor.handle_key(ctrl_j()).is_none(),
+        "Ctrl+J must not submit"
+    );
+    type_str(&mut editor, "two");
+    assert_eq!(editor.buffer.as_str(), "one\ntwo");
+    assert_eq!(editor.cursor, 7);
+}
+
+#[test]
+fn enter_submits_a_multiline_buffer() {
+    let mut editor = InputEditor::new();
+    type_str(&mut editor, "a");
+    editor.handle_key(ctrl_j());
+    type_str(&mut editor, "b");
+    let out = editor.handle_key(press(KeyCode::Enter)).unwrap();
+    assert_eq!(out.as_str(), "a\nb");
+    assert_eq!(editor.buffer.as_str(), "");
+}
+
+#[test]
+fn swap_enter_and_newline_exchanges_the_two_keys() {
+    let swapped = swap_enter_and_newline(press(KeyCode::Enter));
+    assert_eq!(swapped.code, KeyCode::Char('j'));
+    assert_eq!(swapped.modifiers, KeyModifiers::CONTROL);
+
+    let swapped = swap_enter_and_newline(swapped);
+    assert_eq!(swapped.code, KeyCode::Enter);
+    assert_eq!(swapped.modifiers, KeyModifiers::NONE);
+}
+
+#[test]
+fn swap_enter_and_newline_leaves_other_keys_alone() {
+    for key in [
+        press(KeyCode::Char('j')),                         // plain j
+        press_with(KeyCode::Enter, KeyModifiers::SHIFT),   // Shift+Enter
+        press_with(KeyCode::Enter, KeyModifiers::ALT),     // Alt+Enter
+        press_with(KeyCode::Char('j'), KeyModifiers::ALT), // Alt+J
+        press(KeyCode::Tab),
+    ] {
+        let swapped = swap_enter_and_newline(key);
+        assert_eq!(swapped.code, key.code);
+        assert_eq!(swapped.modifiers, key.modifiers);
+    }
+}
+
+/// With swapping on the app exchanges the keys before `handle_key`, so a real
+/// `Enter` reaches the editor as `Ctrl+J` (newline) and a real `Ctrl+J` as
+/// `Enter` (submit). Asserted through the swap helper, i.e. end to end on the
+/// editor's side of the boundary.
+#[test]
+fn swapped_enter_inserts_newline_and_ctrl_j_submits() {
+    let mut editor = InputEditor::new();
+    type_str(&mut editor, "a");
+    assert!(
+        editor
+            .handle_key(swap_enter_and_newline(press(KeyCode::Enter)))
+            .is_none(),
+        "swapped Enter must insert a newline, not submit"
+    );
+    type_str(&mut editor, "b");
+    assert_eq!(editor.buffer.as_str(), "a\nb");
+
+    let out = editor
+        .handle_key(swap_enter_and_newline(ctrl_j()))
+        .expect("swapped Ctrl+J must submit");
+    assert_eq!(out.as_str(), "a\nb");
     assert_eq!(editor.buffer.as_str(), "");
 }

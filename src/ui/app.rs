@@ -946,6 +946,16 @@ impl<'a> App<'a> {
             return Ok(());
         }
 
+        // `swap_enter_and_newline`: exchange `Enter` and `Ctrl+J` before the
+        // editor sees them, so `Enter` inserts a newline and `Ctrl+J` submits.
+        // Done here, after the picker handling above, so a picker's `Enter`
+        // still selects a row.
+        let key = if self.ui.cfg.resolve_swap_enter_and_newline() {
+            crate::ui::input::swap_enter_and_newline(key)
+        } else {
+            key
+        };
+
         if let Some(mut text) = self.input.handle_key(key) {
             #[cfg(feature = "loop")]
             if self.chain.loop_state.as_ref().is_some_and(|ls| ls.active) && !text.starts_with('/')

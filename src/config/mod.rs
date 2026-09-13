@@ -158,6 +158,13 @@ pub struct Config {
     /// Default: true.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mouse_capture: Option<bool>,
+    /// Swap the roles of `Enter` and `Ctrl+J` in the prompt editor: `Enter`
+    /// inserts a newline, `Ctrl+J` submits. For terminals that cannot encode
+    /// `Shift`/`Alt+Enter` (xterm, the Linux console, screen, mosh), where
+    /// `Ctrl+J` is the only portable newline key. Default: false (`Enter`
+    /// sends, `Ctrl+J` inserts a newline).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub swap_enter_and_newline: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_prompt: Option<CompactString>,
     #[cfg(feature = "git-worktree")]
@@ -332,6 +339,12 @@ impl Config {
 
     pub fn resolve_mouse_capture(&self) -> bool {
         self.mouse_capture.unwrap_or(true)
+    }
+
+    /// Whether `Enter` and `Ctrl+J` exchange roles in the prompt editor.
+    /// Default `false`: `Enter` submits and `Ctrl+J` inserts a newline.
+    pub fn resolve_swap_enter_and_newline(&self) -> bool {
+        self.swap_enter_and_newline.unwrap_or(false)
     }
 
     /// Resolves temperature: CLI `--temperature` > quick-model `temperature` >
@@ -679,5 +692,23 @@ mouse_capture = false
         let cfg: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.mouse_capture, Some(false));
         assert!(!cfg.resolve_mouse_capture());
+    }
+
+    #[test]
+    fn swap_enter_and_newline_defaults_off() {
+        assert!(!Config::default().resolve_swap_enter_and_newline());
+    }
+
+    #[test]
+    fn toml_deserializes_swap_enter_and_newline() {
+        let cfg: Config = toml::from_str("swap_enter_and_newline = true\n").unwrap();
+        assert_eq!(cfg.swap_enter_and_newline, Some(true));
+        assert!(cfg.resolve_swap_enter_and_newline());
+
+        let cfg = Config {
+            swap_enter_and_newline: Some(false),
+            ..Default::default()
+        };
+        assert!(!cfg.resolve_swap_enter_and_newline());
     }
 }
