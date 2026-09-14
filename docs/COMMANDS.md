@@ -286,8 +286,10 @@ layers did not consume.
 | ------ | ------ |
 | Scroll wheel | Scroll the viewport (the prompt editor when it has room, otherwise the transcript). |
 | Left click | Place the prompt cursor, or open a link. |
-| Left drag | Select transcript text. |
-| Left release | Copy the selection to the clipboard. |
+| Double click | Select the whole word under the pointer (a letter/digit/`_` run, or a punctuation/whitespace run). |
+| Left drag | Select transcript text, column-accurate — a single word, a phrase mid-line, or across rows. Dragging to the top or bottom row scrolls the transcript, so a selection can extend past the visible rows. |
+| Left double-click | Select the whole word under the pointer (or the run of whitespace/punctuation between words). |
+| Left release | Copy the selection to the clipboard (`clipboard_selection = "primary"` sends it to the X11 PRIMARY selection instead). |
 
 ### Prompt editor
 

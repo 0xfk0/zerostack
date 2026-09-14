@@ -29,6 +29,8 @@ mod convert_history_tests;
 #[cfg(test)]
 mod crc_tests;
 #[cfg(test)]
+mod double_click_tests;
+#[cfg(test)]
 mod edit_tests;
 #[cfg(test)]
 mod esc_prefix_tests;

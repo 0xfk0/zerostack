@@ -158,6 +158,12 @@ pub struct Config {
     /// Default: true.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mouse_capture: Option<bool>,
+    /// Which selection copy operations target: `clipboard` (system clipboard,
+    /// the default) or `primary` (X11 PRIMARY selection, pasted with the
+    /// middle mouse button). Only the copy target changes — selection and the
+    /// `y` key work identically either way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clipboard_selection: Option<types::ClipboardSelection>,
     /// Swap the roles of `Enter` and `Ctrl+J` in the prompt editor: `Enter`
     /// inserts a newline, `Ctrl+J` submits. For terminals that cannot encode
     /// `Shift`/`Alt+Enter` (xterm, the Linux console, screen, mosh), where
@@ -356,6 +362,11 @@ impl Config {
 
     pub fn resolve_mouse_capture(&self) -> bool {
         self.mouse_capture.unwrap_or(true)
+    }
+
+    /// Which selection copy operations target. Default: the system clipboard.
+    pub fn resolve_clipboard_selection(&self) -> types::ClipboardSelection {
+        self.clipboard_selection.unwrap_or_default()
     }
 
     /// Whether `Enter` and `Ctrl+J` exchange roles in the prompt editor.
@@ -784,5 +795,49 @@ mouse_capture = false
         let cfg: Config = toml::from_str("esc_alt_compat = true\n").unwrap();
         assert_eq!(cfg.esc_alt_compat, Some(true));
         assert!(cfg.resolve_esc_alt_compat());
+    }
+
+    #[test]
+    fn clipboard_selection_defaults_to_clipboard() {
+        assert_eq!(
+            Config::default().resolve_clipboard_selection(),
+            types::ClipboardSelection::Clipboard
+        );
+    }
+
+    #[test]
+    fn clipboard_selection_reads_config_value() {
+        let cfg = Config {
+            clipboard_selection: Some(types::ClipboardSelection::Primary),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.resolve_clipboard_selection(),
+            types::ClipboardSelection::Primary
+        );
+    }
+
+    #[test]
+    fn toml_deserializes_clipboard_selection() {
+        let cfg: Config = toml::from_str("clipboard_selection = \"primary\"\n").unwrap();
+        assert_eq!(
+            cfg.clipboard_selection,
+            Some(types::ClipboardSelection::Primary)
+        );
+        assert_eq!(
+            cfg.resolve_clipboard_selection(),
+            types::ClipboardSelection::Primary
+        );
+
+        let cfg: Config = toml::from_str("clipboard_selection = \"clipboard\"\n").unwrap();
+        assert_eq!(
+            cfg.resolve_clipboard_selection(),
+            types::ClipboardSelection::Clipboard
+        );
+    }
+
+    #[test]
+    fn clipboard_selection_rejects_unknown_value() {
+        assert!(toml::from_str::<Config>("clipboard_selection = \"nope\"\n").is_err());
     }
 }

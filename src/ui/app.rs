@@ -2,7 +2,7 @@ use std::io;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::Color;
@@ -76,6 +76,37 @@ pub(crate) struct App<'a> {
     prebuild_rx: Option<mpsc::Receiver<PrebuildPayload>>,
     _terminal_guard: Option<TerminalGuard>,
     last_git_refresh: Option<std::time::Instant>,
+    /// Time and cell of the previous transcript click, for double-click word
+    /// selection. Cleared when a click lands outside the transcript.
+    last_click: Option<(Instant, u16, u16)>,
+    /// True while the selection came from a double-click, so the matching
+    /// mouse release copies the whole word instead of re-collapsing it to the
+    /// release column. Cleared once the pointer drags.
+    selection_by_word: bool,
+}
+
+/// Max gap between two transcript presses that still counts as a double click.
+const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
+/// How far (columns) the second press may drift from the first.
+const DOUBLE_CLICK_SLOP: u16 = 2;
+
+/// Whether a press at `(row, col)` at instant `now` completes a double click
+/// with `prev` (the previous press). Pure so it can be unit-tested without a
+/// terminal or a clock.
+pub(crate) fn is_double_click(
+    prev: Option<(Instant, u16, u16)>,
+    row: u16,
+    col: u16,
+    now: Instant,
+) -> bool {
+    match prev {
+        Some((t, r, c)) => {
+            r == row
+                && c.abs_diff(col) <= DOUBLE_CLICK_SLOP
+                && now.duration_since(t) <= DOUBLE_CLICK_WINDOW
+        }
+        None => false,
+    }
 }
 
 impl<'a> App<'a> {
@@ -469,6 +500,8 @@ impl<'a> App<'a> {
             prebuild_rx,
             _terminal_guard,
             last_git_refresh: Some(std::time::Instant::now()),
+            last_click: None,
+            selection_by_word: false,
         })
     }
 
@@ -688,6 +721,7 @@ impl<'a> App<'a> {
                         .input_cursor_for_click(row, col, &self.input.buffer)
                 {
                     self.input.set_cursor(pos);
+                    self.last_click = None;
                 } else if row < self.renderer.visible_lines() as u16
                     && let Some(idx) = self.renderer.buffer_line_at_row(row)
                 {
@@ -697,32 +731,56 @@ impl<'a> App<'a> {
                                 .write_line(&format!("cannot open link: {}", e), C_ERROR)?;
                         }
                     } else {
-                        self.renderer.selection_active = true;
-                        self.renderer.selection_start = Some(idx);
-                        self.renderer.selection_end = Some(idx);
+                        let now = Instant::now();
+                        let dbl = is_double_click(self.last_click, row, col, now);
+                        self.last_click = Some((now, row, col));
+                        // A second press on the same spot selects the whole
+                        // word; a single press starts a (possibly empty) drag
+                        // selection.
+                        self.selection_by_word = dbl && self.renderer.select_word(idx, col);
+                        if !self.selection_by_word {
+                            self.renderer.start_selection(idx, col);
+                        }
+                    }
+                } else {
+                    self.last_click = None;
+                }
+            }
+            UserEvent::MouseDrag { row, col } => {
+                // Dragging after a double-click falls back to a normal
+                // column-accurate drag selection.
+                self.selection_by_word = false;
+                if self.renderer.selection_active {
+                    // Holding the pointer at the top or bottom edge scrolls the
+                    // transcript, so a selection can reach text off screen. One
+                    // line per event: the pointer's own jitter supplies more.
+                    self.renderer.drag_scroll(row);
+                    // Re-map the row AFTER scrolling so the endpoint tracks the
+                    // line now under the pointer.
+                    if let Some(idx) = self.renderer.buffer_line_at_row(row) {
+                        self.renderer.extend_selection(idx, col);
                     }
                 }
             }
-            UserEvent::MouseDrag { row, col: _ } => {
-                if self.renderer.selection_active
-                    && let Some(idx) = self.renderer.buffer_line_at_row(row)
-                {
-                    self.renderer.selection_end = Some(idx);
-                }
-            }
-            UserEvent::MouseUp { row, col: _ } => {
+            UserEvent::MouseUp { row, col } => {
                 if self.renderer.selection_active {
-                    if let Some(idx) = self.renderer.buffer_line_at_row(row) {
-                        self.renderer.selection_end = Some(idx);
+                    // A word selection keeps the word's own end column; only a
+                    // drag re-collapses the end to the release point.
+                    if !self.selection_by_word
+                        && let Some(idx) = self.renderer.buffer_line_at_row(row)
+                    {
+                        self.renderer.extend_selection(idx, col);
                     }
                     if let Some(text) = self.renderer.selected_text()
-                        && let Err(e) = copy_to_clipboard(&text)
+                        && let Err(e) =
+                            copy_to_clipboard(&text, self.ui.cfg.resolve_clipboard_selection())
                     {
                         self.renderer
                             .write_line(&format!("copy to clipboard failed: {}", e), C_ERROR)?;
                     }
                     self.renderer.clear_selection();
                 }
+                self.selection_by_word = false;
             }
             UserEvent::Paste(data) => {
                 self.input.handle_paste(data);
@@ -813,7 +871,7 @@ impl<'a> App<'a> {
     async fn handle_key_event(&mut self, key: KeyEvent) -> anyhow::Result<()> {
         if self.renderer.selection_active && key.code == KeyCode::Char('y') {
             if let Some(text) = self.renderer.selected_text() {
-                match copy_to_clipboard(&text) {
+                match copy_to_clipboard(&text, self.ui.cfg.resolve_clipboard_selection()) {
                     Ok(()) => {
                         self.renderer.write_line("copied selection", Color::Green)?;
                     }
@@ -1649,7 +1707,11 @@ impl<'a> App<'a> {
                                 .await
                                 {
                                     Ok(login) => {
-                                        let copied = copy_to_clipboard(&login.auth_url).is_ok();
+                                        let copied = copy_to_clipboard(
+                                            &login.auth_url,
+                                            self.ui.cfg.resolve_clipboard_selection(),
+                                        )
+                                        .is_ok();
                                         self.renderer.write_line(
                                     if copied {
                                         "open this URL to authorize (copied to clipboard):"

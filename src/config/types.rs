@@ -82,6 +82,18 @@ pub enum ApiStyle {
     Completions,
 }
 
+/// Which system selection copy operations (`drag-select` release, `y`) write
+/// to. Independent of `mouse_capture`: it only changes the copy *target*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipboardSelection {
+    /// System clipboard (pasted with `Ctrl+V` / `Ctrl+Shift+V`). Default.
+    #[default]
+    Clipboard,
+    /// X11 PRIMARY selection (pasted with the middle mouse button).
+    Primary,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomProviderConfig {
     pub provider_type: CompactString,

@@ -11,6 +11,8 @@ use crossterm::terminal::{Clear, ClearType};
 use regex::Regex;
 use smallvec::SmallVec;
 
+use crate::config::ClipboardSelection;
+
 use super::feed::{BlockStyle, Feed, style_from_color};
 use super::markdown::word_wrap;
 use super::statusline::StatusSpan;
@@ -125,6 +127,63 @@ fn wrap_urls_osc8_cow(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(wrap_urls_osc8(text))
 }
 
+/// Byte offset in `text` for a target display column: the start of the first
+/// character that begins at or past `col` (clamped to the string length). Used
+/// to slice a wrapped row at a mouse column, matching the boundary-snapping
+/// that `input_cursor_for_click` uses. Wide (CJK) characters count as 2.
+pub(crate) fn byte_index_for_col(text: &str, col: usize) -> usize {
+    let mut width = 0usize;
+    for (idx, ch) in text.char_indices() {
+        let cw = char_display_width(ch);
+        if width + cw > col {
+            return idx;
+        }
+        width += cw;
+    }
+    text.len()
+}
+
+/// Whether `ch` is a word character for double-click selection: a letter,
+/// digit, or `_`. Everything else (spaces, punctuation) forms its own run.
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+/// Byte range of the "word" containing display column `col` in `text` — the
+/// maximal run of characters sharing the anchor character's class (word chars,
+/// or the same non-word run). Used to select a whole word on double-click.
+/// Returns an empty range for empty `text`.
+pub(crate) fn word_bounds(text: &str, col: usize) -> (usize, usize) {
+    if text.is_empty() {
+        return (0, 0);
+    }
+    let click = byte_index_for_col(text, col);
+    // Anchor on the character at or after the click; past the end, the last one.
+    let anchor_idx = if click < text.len() {
+        click
+    } else {
+        text.char_indices().last().map(|(i, _)| i).unwrap_or(0)
+    };
+    let anchor = text[anchor_idx..].chars().next().unwrap_or(' ');
+    let word = is_word_char(anchor);
+
+    let mut start = anchor_idx;
+    for (i, ch) in text[..anchor_idx].char_indices().rev() {
+        if is_word_char(ch) != word {
+            break;
+        }
+        start = i;
+    }
+    let mut end = anchor_idx;
+    for (i, ch) in text[anchor_idx..].char_indices() {
+        if is_word_char(ch) != word {
+            break;
+        }
+        end = anchor_idx + i + ch.len_utf8();
+    }
+    (start, end)
+}
+
 #[derive(Clone, Debug)]
 pub struct LineEntry {
     pub text: CompactString,
@@ -151,6 +210,8 @@ struct ChatSnapshot {
     selection_active: bool,
     selection_start: Option<usize>,
     selection_end: Option<usize>,
+    selection_start_col: Option<usize>,
+    selection_end_col: Option<usize>,
     partial: CompactString,
     partial_style: BlockStyle,
     chat_bg: Option<Color>,
@@ -228,6 +289,17 @@ pub struct Renderer {
     pub selection_active: bool,
     pub selection_start: Option<usize>,
     pub selection_end: Option<usize>,
+    /// Display column (within the row's wrapped text, excluding the chat
+    /// margin) where the selection starts/ends. `None` selects the whole row,
+    /// which keeps line-granular callers working.
+    pub selection_start_col: Option<usize>,
+    pub selection_end_col: Option<usize>,
+    /// While a word is selected (double-click), the word's own row and column
+    /// span. Kept so the first drag extends *from the word*: the whole word
+    /// stays selected while the pointer widens the range in either direction.
+    /// Cleared by `clear_selection`/`start_selection`, so a plain drag is
+    /// unaffected.
+    word_anchor: Option<(usize, usize, usize)>,
     prev_input_height: usize,
     /// Number of statusline rows (1-3), fixed by the statusline config at startup.
     statusline_height: usize,
@@ -280,6 +352,9 @@ impl Renderer {
             selection_active: false,
             selection_start: None,
             selection_end: None,
+            selection_start_col: None,
+            selection_end_col: None,
+            word_anchor: None,
             prev_input_height: 0,
             statusline_height: 1,
             chat_margin: 0,
@@ -403,6 +478,8 @@ impl Renderer {
             selection_active: self.selection_active,
             selection_start: self.selection_start,
             selection_end: self.selection_end,
+            selection_start_col: self.selection_start_col,
+            selection_end_col: self.selection_end_col,
             partial: self.partial.clone(),
             partial_style: self.partial_style,
             chat_bg: self.chat_bg,
@@ -544,6 +621,83 @@ impl Renderer {
         self.selection_active = false;
         self.selection_start = None;
         self.selection_end = None;
+        self.selection_start_col = None;
+        self.selection_end_col = None;
+        self.word_anchor = None;
+    }
+
+    /// Begin a drag-selection at click `(row, col)` (row is a buffer line index,
+    /// col a screen column). Both endpoints start at the click so the selection
+    /// is empty until the pointer moves.
+    pub fn start_selection(&mut self, row: usize, col: u16) {
+        let c = self.content_col(col);
+        self.selection_active = true;
+        self.selection_start = Some(row);
+        self.selection_end = Some(row);
+        self.selection_start_col = Some(c);
+        self.selection_end_col = Some(c);
+        self.word_anchor = None;
+    }
+
+    /// Move the moving endpoint of an active drag-selection to `(row, col)`.
+    /// When the drag began with a double-click word selection, the whole word
+    /// stays selected and the pointer widens the range from whichever end it is
+    /// past — dragging before the word moves its start, after it moves its end.
+    pub fn extend_selection(&mut self, row: usize, col: u16) {
+        if !self.selection_active {
+            return;
+        }
+        let c = self.content_col(col);
+        if let Some((wrow, a, b)) = self.word_anchor {
+            let (start_row, start_col, end_row, end_col) = if (row, c) < (wrow, a) {
+                (row, c, wrow, b)
+            } else if (row, c) > (wrow, b) {
+                (wrow, a, row, c)
+            } else {
+                (wrow, a, wrow, b)
+            };
+            self.selection_start = Some(start_row);
+            self.selection_start_col = Some(start_col);
+            self.selection_end = Some(end_row);
+            self.selection_end_col = Some(end_col);
+        } else {
+            self.selection_end = Some(row);
+            self.selection_end_col = Some(c);
+        }
+    }
+
+    /// Select the whole word under a double-click at buffer line `row`, screen
+    /// column `col`. Both endpoints land on the same row, so the word is the
+    /// only thing copied on release. Returns false (leaving any selection
+    /// untouched) when the row has no selectable text.
+    pub fn select_word(&mut self, row: usize, col: u16) -> bool {
+        let click = self.content_col(col);
+        let lines = self.chat_lines(self.max_line_width());
+        let Some(entry) = lines.get(row) else {
+            return false;
+        };
+        let text: &str = &entry.text;
+        let (start, end) = word_bounds(text, click);
+        if start == end {
+            return false;
+        }
+        let start_col = display_width(&text[..start]);
+        let end_col = display_width(&text[..end]);
+        self.selection_active = true;
+        self.selection_start = Some(row);
+        self.selection_end = Some(row);
+        self.selection_start_col = Some(start_col);
+        self.selection_end_col = Some(end_col);
+        // Remember the word span so a subsequent drag extends from the word
+        // rather than collapsing it to the release point.
+        self.word_anchor = Some((row, start_col, end_col));
+        self.chat_dirty = true;
+        true
+    }
+
+    /// Screen column → display column within the row's text (margin removed).
+    fn content_col(&self, col: u16) -> usize {
+        (col as usize).saturating_sub(self.chat_margin as usize)
     }
 
     pub fn link_url_at(&self, buf_idx: usize, col: u16) -> Option<String> {
@@ -563,19 +717,27 @@ impl Renderer {
     }
 
     pub fn selected_text(&self) -> Option<String> {
-        let (start, end) = match (self.selection_start, self.selection_end) {
-            (Some(s), Some(e)) if s <= e => (s, e),
-            (Some(s), Some(e)) => (e, s),
-            _ => return None,
-        };
+        let (start, end, start_col, end_col) = self.normalized_selection()?;
         let lines = self.chat_lines(self.max_line_width());
         let mut result = String::new();
         for i in start..=end {
-            if let Some(entry) = lines.get(i) {
-                if !result.is_empty() {
-                    result.push('\n');
-                }
-                result.push_str(&entry.text);
+            let Some(entry) = lines.get(i) else { continue };
+            let text: &str = &entry.text;
+            let from = if i == start {
+                byte_index_for_col(text, start_col)
+            } else {
+                0
+            };
+            let to = if i == end {
+                byte_index_for_col(text, end_col)
+            } else {
+                text.len()
+            };
+            if i > start {
+                result.push('\n');
+            }
+            if from < to {
+                result.push_str(&text[from..to]);
             }
         }
         if result.is_empty() {
@@ -583,6 +745,40 @@ impl Renderer {
         } else {
             Some(result)
         }
+    }
+
+    /// Selection endpoints normalized so the start precedes the end, with the
+    /// columns defaulted to whole-row bounds when a caller set only the rows.
+    /// Returns `(start_row, end_row, start_col, end_col)`.
+    fn normalized_selection(&self) -> Option<(usize, usize, usize, usize)> {
+        let (s, e) = (self.selection_start?, self.selection_end?);
+        let s_col = self.selection_start_col.unwrap_or(0);
+        let e_col = self.selection_end_col.unwrap_or(usize::MAX);
+        if (s, s_col) <= (e, e_col) {
+            Some((s, e, s_col, e_col))
+        } else {
+            Some((e, s, e_col, s_col))
+        }
+    }
+
+    /// Byte range within `chunk` (a wrapped visual row) that is selected, or
+    /// `None` when the row is not part of the selection.
+    fn row_selection_range(&self, buf_idx: usize, chunk: &str) -> Option<(usize, usize)> {
+        let (start, end, start_col, end_col) = self.normalized_selection()?;
+        if buf_idx < start || buf_idx > end {
+            return None;
+        }
+        let from = if buf_idx == start {
+            byte_index_for_col(chunk, start_col)
+        } else {
+            0
+        };
+        let to = if buf_idx == end {
+            byte_index_for_col(chunk, end_col)
+        } else {
+            chunk.len()
+        };
+        Some((from.min(to), to))
     }
 
     fn commit_partial(&mut self) {
@@ -675,6 +871,21 @@ impl Renderer {
             self.scroll_offset -= 1;
             self.chat_dirty = true;
         }
+    }
+
+    /// Scroll one line when a drag reaches the top or bottom edge of the chat
+    /// viewport, so a selection can extend past the rows currently on screen.
+    /// Returns whether the view actually moved (false at either end of the
+    /// transcript, and for rows in the middle of the viewport).
+    pub fn drag_scroll(&mut self, row: u16) -> bool {
+        let visible = self.visible_lines();
+        let before = self.scroll_offset;
+        if row == 0 {
+            self.scroll_line_up();
+        } else if visible > 0 && (row as usize) + 1 >= visible {
+            self.scroll_line_down();
+        }
+        self.scroll_offset != before
     }
 
     pub fn scroll_page_up(&mut self) {
@@ -787,28 +998,34 @@ impl Renderer {
 
             self.exec(MoveTo(0, visual_row))?;
 
-            let is_selected = self.selection_active
-                && if let (Some(s), Some(e)) = (self.selection_start, self.selection_end) {
-                    let lo = s.min(e);
-                    let hi = s.max(e);
-                    buf_idx >= lo && buf_idx <= hi
-                } else {
-                    false
-                };
+            let chunk: &str = chunk;
+            let sel_range = if self.selection_active {
+                self.row_selection_range(buf_idx, chunk)
+            } else {
+                None
+            };
 
             if let Some(bg) = self.chat_bg {
                 let bg = self.color(bg);
                 write!(self.backend, "{}", SetBackgroundColor(bg))?;
             }
             Self::write_chat_margin(self.chat_margin, &mut self.backend)?;
-            if is_selected {
-                write!(self.backend, "{}", SetAttribute(Attribute::Reverse))?;
-            }
             let fg = self.color(color);
             write!(self.backend, "{}", SetForegroundColor(fg))?;
-            write!(self.backend, "{}", wrap_urls_osc8_cow(chunk))?;
-            if is_selected {
-                write!(self.backend, "{}", SetAttribute(Attribute::NoReverse))?;
+            match sel_range {
+                Some((from, to)) if from < to => {
+                    // Reverse only the selected span, leaving the row's other
+                    // columns in normal video so a partial-row selection reads
+                    // exactly as it will be copied.
+                    write!(self.backend, "{}", wrap_urls_osc8_cow(&chunk[..from]))?;
+                    write!(self.backend, "{}", SetAttribute(Attribute::Reverse))?;
+                    write!(self.backend, "{}", wrap_urls_osc8_cow(&chunk[from..to]))?;
+                    write!(self.backend, "{}", SetAttribute(Attribute::NoReverse))?;
+                    write!(self.backend, "{}", wrap_urls_osc8_cow(&chunk[to..]))?;
+                }
+                _ => {
+                    write!(self.backend, "{}", wrap_urls_osc8_cow(chunk))?;
+                }
             }
             write!(self.backend, "{}", Clear(ClearType::UntilNewLine))?;
             write!(self.backend, "{}", ResetColor)?;
@@ -1546,17 +1763,40 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
     anyhow::bail!("no working opener found (tried xdg-open, open, cmd)")
 }
 
-/// Copy `text` to the system clipboard. Tries external tools (checking
-/// their exit status, so a tool that starts but fails — e.g. xclip without
-/// an X display — falls through) and finally the OSC 52 terminal escape.
-/// Errors only when even the escape cannot be written.
-pub fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
-    let cmds: &[(&str, &[&str])] = &[
-        ("wl-copy", &[]),
-        ("xclip", &["-selection", "clipboard"]),
-        ("pbcopy", &[]),
-        ("clip.exe", &[]),
-    ];
+/// External tools tried for the system clipboard, in order.
+const CLIPBOARD_CMDS: &[(&str, &[&str])] = &[
+    ("wl-copy", &[]),
+    ("xclip", &["-selection", "clipboard"]),
+    ("xsel", &["--clipboard", "--input"]),
+    ("pbcopy", &[]),
+    ("clip.exe", &[]),
+];
+
+/// External tools tried for the X11 PRIMARY selection. Wayland has no PRIMARY
+/// selection, so only the X11 tools apply.
+const PRIMARY_CMDS: &[(&str, &[&str])] = &[
+    ("xclip", &["-selection", "primary"]),
+    ("xsel", &["--primary", "--input"]),
+];
+
+/// The external-tool list and the OSC 52 target byte (`c` = clipboard,
+/// `p` = primary) for a given selection.
+pub(crate) fn clipboard_strategy(
+    selection: ClipboardSelection,
+) -> (&'static [(&'static str, &'static [&'static str])], char) {
+    match selection {
+        ClipboardSelection::Clipboard => (CLIPBOARD_CMDS, 'c'),
+        ClipboardSelection::Primary => (PRIMARY_CMDS, 'p'),
+    }
+}
+
+/// Copy `text` to the configured selection (system clipboard by default, or
+/// the X11 PRIMARY selection). Tries external tools (checking their exit
+/// status, so a tool that starts but fails — e.g. xclip without an X display —
+/// falls through) and finally the OSC 52 terminal escape. Errors only when
+/// even the escape cannot be written.
+pub fn copy_to_clipboard(text: &str, selection: ClipboardSelection) -> anyhow::Result<()> {
+    let (cmds, osc_target) = clipboard_strategy(selection);
     for &(cmd, args) in cmds {
         let Ok(mut child) = std::process::Command::new(cmd)
             .args(args)
@@ -1585,7 +1825,7 @@ pub fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
     // and most other modern terminals. No external tools needed.
     let encoded = base64_encode(text.as_bytes());
     let mut stdout = std::io::stdout().lock();
-    write!(stdout, "\x1b]52;c;{encoded}\x07")?;
+    write!(stdout, "\x1b]52;{osc_target};{encoded}\x07")?;
     stdout.flush()?;
     Ok(())
 }
