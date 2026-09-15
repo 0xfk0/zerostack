@@ -1005,7 +1005,7 @@ impl Tool for MemoryWrite {
 
     fn description(&self) -> String {
         "Persist durable memory to disk. target=long_term writes curated facts/\
-preferences/decisions to MEMORY.md (always loaded next session), one fact per line; long_term \
+preferences/decisions to MEMORY.md (always loaded next session); be concise. long_term \
 appends are deduplicated (whitespace-insensitive) so a line already present is skipped. \
 target=scratchpad maintains a \
 per-project checklist (use `- [ ]` items; open ones are auto-injected, mode=overwrite to rewrite the list). \

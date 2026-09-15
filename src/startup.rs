@@ -864,7 +864,7 @@ impl Startup {
                     - Design decisions and rationale\n\
                     - External dependencies and how they are used\n\
                     - Entry points for different execution modes\n\n\
-                    Keep the document under ~300 lines of code total. Keep entries concise and reference specific source files."
+                    Keep entries concise and reference specific source files."
                         .to_string(),
                 )
             } else {

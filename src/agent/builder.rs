@@ -24,7 +24,7 @@ pub fn build_preamble(context: &ContextFiles, reasoning_enabled: bool) -> String
     let reasoning_prefix = if reasoning_enabled {
         "You reason carefully and think step-by-step.\n\n"
     } else {
-        "You respond concisely without showing your reasoning.\n\n"
+        "You respond without showing your reasoning.\n\n"
     };
     let suffix = crate::session::storage::load_suffix();
     let context_agents = context.agents.as_deref().unwrap_or("");
@@ -401,12 +401,11 @@ You are a fast side-assistant for quick \"by the way\" questions during a coding
 session. The user pressed /btw to ask you something in parallel with the main \
 assistant, WITHOUT interrupting it.
 
-Your only job: answer the user's question directly, briefly, and helpfully, using \
+Your only job: answer the user's question directly and helpfully, using \
 the conversation so far and the project context below. Reply in the user's \
 language.
 
-Match your length to the question: greetings, thanks, or yes/no questions get a \
-ONE-LINE reply. Do NOT volunteer project setup, build, run, or test instructions \
+Do NOT volunteer project setup, build, run, or test instructions \
 unless the user explicitly asks how to build or run. The project context below is \
 background for answering; it is NOT a script to recite.
 

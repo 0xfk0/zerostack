@@ -186,7 +186,7 @@ If the backup copy itself fails (for example the `.bak` path is not writable), t
 
 ## Long-term append deduplication
 
-`MEMORY.md` is curated one fact per line, so `memory_write target=long_term mode=append` deduplicates its lines. This applies to `long_term` appends **only**: `scratchpad`, `daily`, and `note` appends are never deduplicated (repeats are preserved), and no target dedups on `overwrite`.
+`MEMORY.md` is curated line by line, so `memory_write target=long_term mode=append` deduplicates its lines. This applies to `long_term` appends **only**: `scratchpad`, `daily`, and `note` appends are never deduplicated (repeats are preserved), and no target dedups on `overwrite`.
 
 Comparison is whitespace-insensitive: each line is normalized by trimming and collapsing every run of Unicode whitespace (ASCII spaces/tabs and the full-width `U+3000` space) to a single ASCII space, preserving case. Two lines that differ only in whitespace width are duplicates.
 
