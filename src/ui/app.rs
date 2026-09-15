@@ -22,6 +22,7 @@ use crate::ui::pickers::rewind::RewindOutcome;
 use crate::ui::pickers::switcher::SwitcherResult;
 use crate::ui::renderer::{
     self as renderer_mod, ChainPrompt, Renderer, copy_to_clipboard, read_from_clipboard,
+    read_from_primary,
 };
 use crate::ui::slash::{apply_prompt_model, handle_compress, handle_slash};
 #[cfg(feature = "git-worktree")]
@@ -85,6 +86,53 @@ pub(crate) struct App<'a> {
     /// mouse release copies the whole word instead of re-collapsing it to the
     /// release column. Cleared once the pointer drags.
     selection_by_word: bool,
+    /// True between a middle-button press and its release. While armed, a
+    /// terminal-delivered paste counts as the terminal having done the
+    /// middle-click paste itself, which the release must not repeat.
+    /// Middle-button gesture state, so a middle click pastes PRIMARY without
+    /// also pasting whatever the terminal pasted by itself. See
+    /// [`MiddleClickPaste`].
+    middle_paste: MiddleClickPaste,
+}
+
+/// Decides whether a middle-button release pastes the X11 PRIMARY selection
+/// itself.
+///
+/// The app has to paste on middle click because xterm suppresses its built-in
+/// `~Ctrl ~Meta <Btn2Up>: insert-selection` while mouse reporting is on — but
+/// xterm pastes anyway some of the time, which would double the selection. So
+/// the press opens a window, and a paste arriving inside it means the terminal
+/// handled the gesture. Pure so the pairing can be unit-tested without a
+/// terminal or a clipboard.
+#[derive(Default)]
+pub(crate) struct MiddleClickPaste {
+    armed: bool,
+    terminal_pasted: bool,
+}
+
+impl MiddleClickPaste {
+    /// The middle button went down.
+    pub(crate) fn on_press(&mut self) {
+        self.armed = true;
+        self.terminal_pasted = false;
+    }
+
+    /// A paste arrived — from the terminal, or synthesized by a paste burst.
+    pub(crate) fn on_paste(&mut self) {
+        if self.armed {
+            self.terminal_pasted = true;
+        }
+    }
+
+    /// The middle button came up: `true` if the app must read PRIMARY itself.
+    /// Clears the window either way, so a release lost to a focus change cannot
+    /// leak into the next gesture.
+    pub(crate) fn on_release(&mut self) -> bool {
+        let paste = self.armed && !self.terminal_pasted;
+        self.armed = false;
+        self.terminal_pasted = false;
+        paste
+    }
 }
 
 /// Max gap between two transcript presses that still counts as a double click.
@@ -504,6 +552,7 @@ impl<'a> App<'a> {
             last_git_refresh: Some(std::time::Instant::now()),
             last_click: None,
             selection_by_word: false,
+            middle_paste: MiddleClickPaste::default(),
         })
     }
 
@@ -784,7 +833,21 @@ impl<'a> App<'a> {
                 }
                 self.selection_by_word = false;
             }
+            UserEvent::MiddlePress => self.middle_paste.on_press(),
+            UserEvent::MiddleRelease => {
+                if self.middle_paste.on_release() {
+                    match read_from_primary() {
+                        Ok(Some(text)) => self.input.handle_paste(text),
+                        Ok(None) => {} // empty selection: silent, like Ctrl+V
+                        Err(e) => {
+                            self.renderer
+                                .write_line(&format!("primary paste failed: {}", e), C_ERROR)?;
+                        }
+                    }
+                }
+            }
             UserEvent::Paste(data) => {
+                self.middle_paste.on_paste();
                 self.input.handle_paste(data);
             }
             #[cfg(feature = "mcp")]

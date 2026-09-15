@@ -521,6 +521,17 @@ pub(crate) fn spawn_event_thread(
                             col: m.column,
                         });
                     }
+                    // xterm suppresses its built-in middle-click paste while
+                    // mouse reporting is on, so the app has to do it. It is
+                    // forwarded as a press/release pair rather than one event
+                    // because the app must be able to tell whether the terminal
+                    // pasted anyway (see `UserEvent::MiddleRelease`).
+                    MouseEventKind::Down(MouseButton::Middle) => {
+                        let _ = user_tx.blocking_send(UserEvent::MiddlePress);
+                    }
+                    MouseEventKind::Up(MouseButton::Middle) => {
+                        let _ = user_tx.blocking_send(UserEvent::MiddleRelease);
+                    }
                     _ => {}
                 },
                 event::Event::Resize(_cols, _rows) => {

@@ -285,6 +285,10 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
     );
     write_result(
         ctx.renderer,
+        "  middle click           paste the X11 primary selection",
+    );
+    write_result(
+        ctx.renderer,
         "  Esc (while selected)   clear selection (no copy)",
     );
     write_result(ctx.renderer, "  Ctrl+R                 toggle reasoning");

@@ -30,7 +30,7 @@ Single crate, no workspace. All source under `src/`.
 - **`AnyClient`** (`src/provider.rs:153`) / **`AnyModel`** (`:545`) / **`AnyAgent`** (`:562`) — type-erased enums wrapping rig's provider-specific clients (OpenAI, Anthropic, Gemini, Ollama, OpenRouter). `AnyAgent` provides `run_print()` and `spawn_runner()`. No custom traits — enum dispatch replaces dynamic dispatch.
 - **`AgentRunner`** (`src/agent/runner.rs:17`) — holds `mpsc::Receiver<AgentEvent>`, spawned via `spawn_agent()`.
 - **`AgentEvent`** (`src/event.rs:4`) — `Token`, `Reasoning`, `ToolCall`, `ToolResult`, `SubagentToolCall`, `Error`, `Done`.
-- **`UserEvent`** (`src/event.rs:64`) — `Key`, `ScrollUp/Down`, `Resize`, `Paste`, `MouseDown/Drag/Up`.
+- **`UserEvent`** (`src/event.rs:74`) — `Key`, `ScrollUp/Down`, `Resize`, `Paste`, `MiddlePress/MiddleRelease`, `MouseDown/Drag/Up`.
 - **`Session`** (`src/session/mod.rs:61`) — serializable state: messages, compactions, costs, permission allowlist, model/provider info.
 - **`PermissionChecker`** (`src/permission/checker.rs:29`) — dual-layer (glob + regex) rules, doom-loop detection, `SecurityMode` dispatch.
 - **`TerminalGuard`** (`src/ui/terminal.rs:10`) — RAII for raw mode, alt screen, mouse capture.

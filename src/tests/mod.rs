@@ -70,6 +70,7 @@ mod mcp_oauth_tests;
 mod mcp_timeout_tests;
 #[cfg(all(test, feature = "memory"))]
 mod memory_tests;
+mod middle_click_tests;
 #[cfg(test)]
 mod models_catalog_tests;
 #[cfg(all(test, feature = "multimodal"))]

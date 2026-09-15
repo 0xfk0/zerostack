@@ -93,6 +93,16 @@ pub enum UserEvent {
         row: u16,
         col: u16,
     },
+    /// The middle mouse button was pressed. Opens a dedup window: xterm pastes
+    /// PRIMARY itself unless the application has mouse reporting on, and it is
+    /// the *release* that carries that paste, so the press marks where to start
+    /// watching for one.
+    MiddlePress,
+    /// The middle mouse button was released: paste the X11 PRIMARY selection at
+    /// the cursor, unless a [`UserEvent::Paste`] arrived since the matching
+    /// [`UserEvent::MiddlePress`] — then the terminal pasted already, and
+    /// reading PRIMARY again would insert the selection twice.
+    MiddleRelease,
     /// An interactive MCP OAuth login finished in a background task. `error` is
     /// `None` on success. Handled by the TUI loop to reconnect the server.
     #[cfg(feature = "mcp")]

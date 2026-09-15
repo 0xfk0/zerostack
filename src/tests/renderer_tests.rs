@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use crate::config::ClipboardSelection;
 use crate::ui::renderer::{
-    READ_CLIPBOARD_CMDS, base64_encode, clipboard_strategy, copy_to_clipboard, is_safe_url,
-    read_clipboard_via, read_from_clipboard,
+    READ_CLIPBOARD_CMDS, READ_PRIMARY_CMDS, base64_encode, clipboard_strategy, copy_to_clipboard,
+    is_safe_url, read_clipboard_via, read_from_clipboard, read_from_primary,
 };
 
 #[test]
@@ -204,6 +204,48 @@ fn read_from_clipboard_does_not_panic() {
     // Only the contract matters here — never panic, and never mistake an empty
     // clipboard for a failure.
     if let Err(e) = read_from_clipboard() {
+        assert!(!e.to_string().is_empty(), "an error must explain itself");
+    }
+}
+
+#[test]
+fn read_primary_strategy_uses_read_flags_not_write_flags() {
+    // The middle-click paste source is the X11 PRIMARY selection. The copy
+    // table's `--input`/`-selection primary` would write an empty selection
+    // over PRIMARY instead of reading it.
+    assert!(READ_PRIMARY_CMDS.contains(&("xsel", &["--primary", "--output"][..])));
+    assert!(READ_PRIMARY_CMDS.contains(&("xclip", &["-selection", "primary", "-out"][..])));
+    assert!(READ_PRIMARY_CMDS.contains(&("wl-paste", &["--primary", "--no-newline"][..])));
+    assert!(
+        !READ_PRIMARY_CMDS
+            .iter()
+            .any(|(_, args)| args.contains(&"--input") || args.contains(&"-in"))
+    );
+}
+
+#[test]
+fn read_primary_strategy_never_targets_the_system_clipboard() {
+    // Ctrl+V reads the system clipboard, the middle button reads PRIMARY.
+    // Keeping the two tables disjoint is what makes the app's duplicate-paste
+    // check meaningful.
+    assert!(
+        !READ_PRIMARY_CMDS
+            .iter()
+            .any(|(_, args)| args.contains(&"--clipboard") || args.contains(&"clipboard"))
+    );
+    // Neither platform has a PRIMARY selection.
+    assert!(
+        !READ_PRIMARY_CMDS
+            .iter()
+            .any(|(cmd, _)| *cmd == "pbpaste" || *cmd == "powershell")
+    );
+}
+
+#[test]
+fn read_from_primary_does_not_panic() {
+    // Environment-dependent by nature, like `read_from_clipboard`: only the
+    // contract is asserted — never panic, and an error must explain itself.
+    if let Err(e) = read_from_primary() {
         assert!(!e.to_string().is_empty(), "an error must explain itself");
     }
 }

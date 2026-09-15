@@ -1874,6 +1874,24 @@ pub fn read_from_clipboard() -> anyhow::Result<Option<String>> {
     read_clipboard_via(READ_CLIPBOARD_CMDS, CLIPBOARD_READ_TIMEOUT)
 }
 
+/// External tools tried for *reading* the X11 PRIMARY selection, in order.
+/// Wayland has no PRIMARY selection and neither do macOS or Windows, so only
+/// the X11 tools apply. This is the middle-click paste source.
+pub(crate) const READ_PRIMARY_CMDS: &[(&str, &[&str])] = &[
+    ("wl-paste", &["--primary", "--no-newline"]),
+    ("xclip", &["-selection", "primary", "-out"]),
+    ("xsel", &["--primary", "--output"]),
+];
+
+/// Read the X11 PRIMARY selection — the middle-click paste source.
+///
+/// Same contract as [`read_from_clipboard`]: `Ok(None)` is an *empty* selection
+/// (so the caller can stay silent), `Err` is a reader that is missing, failed,
+/// or had to be killed after [`CLIPBOARD_READ_TIMEOUT`].
+pub fn read_from_primary() -> anyhow::Result<Option<String>> {
+    read_clipboard_via(READ_PRIMARY_CMDS, CLIPBOARD_READ_TIMEOUT)
+}
+
 /// The reader loop behind [`read_from_clipboard`], parameterized by the tool
 /// list and deadline. Those are the two things a real clipboard makes
 /// untestable — an installed helper and a frozen selection owner — so tests

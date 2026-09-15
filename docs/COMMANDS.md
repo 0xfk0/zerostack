@@ -291,6 +291,7 @@ layers did not consume.
 | Left drag | Select transcript text, column-accurate — a single word, a phrase mid-line, or across rows. Dragging to the top or bottom row scrolls the transcript, so a selection can extend past the visible rows. |
 | Left double-click | Select the whole word under the pointer (or the run of whitespace/punctuation between words). |
 | Left release | Copy the selection to the clipboard (`clipboard_selection = "primary"` sends it to the X11 PRIMARY selection instead). |
+| Middle click | Paste the X11 PRIMARY selection at the cursor. xterm suppresses its own middle-click paste while zerostack has mouse reporting on, so zerostack reads PRIMARY itself (`wl-paste`/`xclip`/`xsel`, killed after 1s). An empty selection does nothing, no reader reports an error, and a paste the terminal made itself is not duplicated. Needs `mouse_capture`; with it off your terminal does the paste. |
 
 ### Prompt editor
 

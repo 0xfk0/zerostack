@@ -796,6 +796,48 @@ async fn paste_with_cr_line_endings_submits_as_newlines() {
     app.teardown().await;
 }
 
+/// A terminal paste arriving during a middle-button gesture must still reach
+/// the editor: only the app's *second* read is suppressed, never the text
+/// itself. That the suppression works is pinned by the `MiddleClickPaste`
+/// tests in `middle_click_tests`; this covers the wiring.
+#[tokio::test]
+async fn middle_release_after_a_terminal_paste_does_not_paste_again() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![]).await;
+
+    app.inject(UserEvent::MiddlePress).await;
+    app.inject(UserEvent::Paste("from-terminal".to_string()))
+        .await;
+    app.inject(UserEvent::MiddleRelease).await;
+    step_until(&mut app, |a| !a.input_buffer().is_empty()).await;
+
+    assert_eq!(
+        app.input_buffer(),
+        "from-terminal",
+        "the release must not read PRIMARY again"
+    );
+
+    app.teardown().await;
+}
+
+/// A release with no press pastes nothing: the press may have been lost, and
+/// with `mouse_capture` off the terminal pastes by itself and neither event
+/// reaches the app at all.
+#[tokio::test]
+async fn middle_release_without_a_press_is_a_noop() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![]).await;
+
+    app.inject(UserEvent::MiddleRelease).await;
+    for _ in 0..3 {
+        pump(&mut app).await;
+    }
+
+    assert_eq!(app.input_buffer(), "");
+
+    app.teardown().await;
+}
+
 #[tokio::test]
 async fn ctrl_r_toggles_reasoning_visibility() {
     let _guard = acquire();
