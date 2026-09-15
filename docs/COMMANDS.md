@@ -277,6 +277,7 @@ layers did not consume.
 | `Alt+P` | Open the prompt switcher (`Enter` applies immediately via `/prompt <name>`, including `%%mode=` and `[prompt_to_model]`). |
 | `Ctrl+G` | Open the current input in the system editor (`$EDITOR`). |
 | `Ctrl+H` | Launch `lazygit` (git TUI) in the project directory. |
+| `Ctrl+V` | Paste the system clipboard at the cursor. Read with `wl-paste`/`xclip`/`xsel`/`pbpaste`, killed after 1s; an empty clipboard does nothing, and no reader installed reports an error. Unlike the copy path there is no OSC 52 fallback — terminals refuse the read query. |
 | `Esc` | Close the active picker / cancel the current overlay; while a selection is active, clear it. |
 | `y` (with a selection) | Copy the selected text to the clipboard. |
 

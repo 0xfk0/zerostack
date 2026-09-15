@@ -1,5 +1,6 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
 use compact_str::CompactString;
 use crossterm::QueueableCommand;
@@ -1828,6 +1829,169 @@ pub fn copy_to_clipboard(text: &str, selection: ClipboardSelection) -> anyhow::R
     write!(stdout, "\x1b]52;{osc_target};{encoded}\x07")?;
     stdout.flush()?;
     Ok(())
+}
+
+/// External tools tried for *reading* the system clipboard, in order. Unlike
+/// [`CLIPBOARD_CMDS`] these print the selection on stdout, so the read-only
+/// counterparts of the copy flags apply (`--output`/`-out`/`--no-newline`).
+/// The X11 PRIMARY selection is deliberately absent: `Ctrl+V` always means the
+/// system clipboard, and PRIMARY is already pasted with the middle mouse button
+/// or `Shift+Insert`.
+pub(crate) const READ_CLIPBOARD_CMDS: &[(&str, &[&str])] = &[
+    ("wl-paste", &["--no-newline"]),
+    ("xclip", &["-selection", "clipboard", "-out"]),
+    ("xsel", &["--clipboard", "--output"]),
+    ("pbpaste", &[]),
+    (
+        "powershell",
+        &["-NoProfile", "-Command", "Get-Clipboard -Raw"],
+    ),
+];
+
+/// How long one clipboard reader may run before it is killed. A read can block
+/// indefinitely — if the selection owner is alive but frozen, xclip/xsel wait
+/// on the X server — which on the single-threaded runtime would freeze the TUI
+/// with it. Bounded instead: a slow paste becomes an error line. Per helper,
+/// but only one of them is normally installed, so the first that answers wins.
+const CLIPBOARD_READ_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long to wait for the stdout reader thread before abandoning it. Only
+/// reached by a helper that escaped its process group and is still holding the
+/// write end of the pipe open, where joining would freeze the TUI.
+const CLIPBOARD_READER_GRACE: Duration = Duration::from_millis(250);
+
+/// Read the system clipboard through the first available external tool.
+///
+/// `Ok(None)` means the clipboard is *empty*, which the tools report as exit
+/// status 0 with no output — a success, so `Ctrl+V` can stay silent instead of
+/// reporting a spurious failure. `Err` means no tool is installed, or the one
+/// that ran failed or had to be killed after [`CLIPBOARD_READ_TIMEOUT`].
+///
+/// There is no OSC 52 fallback, unlike the copy path: terminals gate or refuse
+/// the read query (xterm denies `GetSelection` by default), so a read can
+/// genuinely fail and the caller must be able to say so.
+pub fn read_from_clipboard() -> anyhow::Result<Option<String>> {
+    read_clipboard_via(READ_CLIPBOARD_CMDS, CLIPBOARD_READ_TIMEOUT)
+}
+
+/// The reader loop behind [`read_from_clipboard`], parameterized by the tool
+/// list and deadline. Those are the two things a real clipboard makes
+/// untestable — an installed helper and a frozen selection owner — so tests
+/// drive it with a stand-in command instead.
+pub(crate) fn read_clipboard_via(
+    cmds: &[(&str, &[&str])],
+    timeout: Duration,
+) -> anyhow::Result<Option<String>> {
+    let mut last_error: Option<String> = None;
+    for &(cmd, args) in cmds {
+        let mut command = std::process::Command::new(cmd);
+        command
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        // Own process group, so a timeout can kill the whole helper tree: a
+        // helper's own children may be the ones holding the pipe open, and
+        // they outlive a kill of the direct child alone.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let Ok(mut child) = command.spawn() else {
+            continue; // tool not installed
+        };
+
+        // Drain stdout on a helper thread: a selection can be larger than the
+        // pipe buffer, and a child blocked writing to a full pipe would never
+        // exit for `try_wait` to observe. Killing the group below closes the
+        // pipe, so the reader normally finishes at once.
+        let mut stdout = child.stdout.take().expect("stdout was piped");
+        let reader = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let ok = stdout.read_to_end(&mut buf).is_ok();
+            (ok, buf)
+        });
+
+        let deadline = Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                // Past the deadline: kill rather than block the UI. `try_wait`
+                // just reported the child alive, so its pid cannot have been
+                // recycled and targeting its group is safe.
+                //
+                // Both kills are needed and neither is redundant: the group kill
+                // reaches grandchildren that may hold the pipe open, but it
+                // shells out to the `kill` binary, so it silently does nothing
+                // when PATH lacks `/usr/bin` — and `Child::kill` (SIGKILL to the
+                // direct child, no external binary) is what guarantees the
+                // `wait` below returns instead of blocking for the child's full
+                // lifetime.
+                Ok(None) => {
+                    crate::sandbox::kill_process_group(child.id());
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    last_error = Some(format!("{cmd}: {e}"));
+                    break None;
+                }
+            }
+        };
+
+        let (read_ok, buf) = collect_reader(reader, CLIPBOARD_READER_GRACE);
+
+        let Some(status) = status else {
+            last_error.get_or_insert_with(|| format!("{cmd} timed out after {timeout:?}"));
+            continue;
+        };
+        if !status.success() {
+            last_error = Some(format!("{cmd} exited with {status}"));
+            continue;
+        }
+        if !read_ok {
+            last_error = Some(format!("{cmd}: could not read its output"));
+            continue;
+        }
+        if buf.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
+    }
+
+    match last_error {
+        Some(e) => anyhow::bail!("{e}"),
+        None => {
+            let names: Vec<&str> = cmds.iter().map(|(cmd, _)| *cmd).collect();
+            anyhow::bail!("no clipboard reader found (tried {})", names.join(", "))
+        }
+    }
+}
+
+/// Collect a reader thread's output, waiting at most `grace` for it. A thread
+/// left running is detached rather than killed — nothing can interrupt a
+/// blocked `read` from outside — but its output is unusable either way, and the
+/// alternative is an unbounded join that freezes the TUI.
+fn collect_reader(
+    reader: std::thread::JoinHandle<(bool, Vec<u8>)>,
+    grace: Duration,
+) -> (bool, Vec<u8>) {
+    let deadline = Instant::now() + grace;
+    while !reader.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if reader.is_finished() {
+        reader.join().unwrap_or((false, Vec::new()))
+    } else {
+        (false, Vec::new())
+    }
 }
 
 /// Minimal base64 encoder — avoids pulling in a crate just for clipboard support.

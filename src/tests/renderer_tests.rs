@@ -1,5 +1,10 @@
+use std::time::Duration;
+
 use crate::config::ClipboardSelection;
-use crate::ui::renderer::{base64_encode, clipboard_strategy, copy_to_clipboard, is_safe_url};
+use crate::ui::renderer::{
+    READ_CLIPBOARD_CMDS, base64_encode, clipboard_strategy, copy_to_clipboard, is_safe_url,
+    read_clipboard_via, read_from_clipboard,
+};
 
 #[test]
 fn base64_encode_empty() {
@@ -73,6 +78,134 @@ fn clipboard_strategy_primary_uses_only_x11_tools() {
     // Wayland/macOS/Windows tools target the clipboard, not PRIMARY.
     assert!(!cmds.iter().any(|(cmd, _)| *cmd == "wl-copy"));
     assert!(!cmds.iter().any(|(cmd, _)| *cmd == "pbcopy"));
+}
+
+#[test]
+fn read_clipboard_strategy_uses_read_flags_not_write_flags() {
+    // The copy table and the read table are separate: `--input`/`-selection
+    // clipboard` alone would write an empty selection over the user's
+    // clipboard instead of pasting it.
+    assert!(READ_CLIPBOARD_CMDS.contains(&("xsel", &["--clipboard", "--output"][..])));
+    assert!(
+        READ_CLIPBOARD_CMDS.contains(&("xclip", &["-selection", "clipboard", "-out"][..])),
+        "xclip must be asked to print the selection with -out"
+    );
+    assert!(READ_CLIPBOARD_CMDS.contains(&("wl-paste", &["--no-newline"][..])));
+    assert!(
+        !READ_CLIPBOARD_CMDS
+            .iter()
+            .any(|(_, args)| args.contains(&"--input"))
+    );
+    assert!(
+        !READ_CLIPBOARD_CMDS
+            .iter()
+            .any(|(_, args)| args.contains(&"-in"))
+    );
+}
+
+#[test]
+fn read_clipboard_strategy_never_targets_primary() {
+    // Ctrl+V always means the system clipboard; PRIMARY is already reachable
+    // with the middle mouse button / Shift+Insert.
+    assert!(
+        !READ_CLIPBOARD_CMDS
+            .iter()
+            .any(|(_, args)| args.contains(&"--primary") || args.contains(&"primary"))
+    );
+}
+
+/// A reader that prints a selection is the success path: the bytes come back
+/// as-is (no trailing-newline trimming — the clipboard is inserted verbatim).
+#[test]
+fn read_clipboard_via_returns_the_selection() {
+    let cmds: &[(&str, &[&str])] = &[("sh", &["-c", "printf 'clip1\\nclip2\\n'"])];
+    let got = read_clipboard_via(cmds, Duration::from_secs(5)).expect("read should succeed");
+    assert_eq!(got.as_deref(), Some("clip1\nclip2\n"));
+}
+
+/// Exit status 0 with no output is an *empty clipboard* — a success, which
+/// `Ctrl+V` renders as silence. Reporting it as an error would print a
+/// spurious failure on every paste with nothing to paste.
+#[test]
+fn read_clipboard_via_treats_empty_output_as_success() {
+    let cmds: &[(&str, &[&str])] = &[("sh", &["-c", "true"])];
+    assert_eq!(
+        read_clipboard_via(cmds, Duration::from_secs(5)).expect("empty clipboard is not an error"),
+        None
+    );
+}
+
+#[test]
+fn read_clipboard_via_falls_through_an_uninstalled_tool() {
+    let cmds: &[(&str, &[&str])] = &[
+        ("zerostack-no-such-reader", &[]),
+        ("sh", &["-c", "printf 'second'"]),
+    ];
+    assert_eq!(
+        read_clipboard_via(cmds, Duration::from_secs(5))
+            .expect("second reader should answer")
+            .as_deref(),
+        Some("second")
+    );
+}
+
+#[test]
+fn read_clipboard_via_no_tool_installed_names_what_it_tried() {
+    let cmds: &[(&str, &[&str])] = &[("zerostack-no-such-reader", &[])];
+    let err = read_clipboard_via(cmds, Duration::from_secs(5))
+        .expect_err("no reader means an error, not silence")
+        .to_string();
+    assert!(err.contains("no clipboard reader found"), "{err}");
+    assert!(err.contains("zerostack-no-such-reader"), "{err}");
+}
+
+#[test]
+fn read_clipboard_via_failing_tool_reports_exit_status() {
+    let cmds: &[(&str, &[&str])] = &[("sh", &["-c", "exit 3"])];
+    let err = read_clipboard_via(cmds, Duration::from_secs(5))
+        .expect_err("a failing reader is an error")
+        .to_string();
+    assert!(err.contains("exited with"), "{err}");
+}
+
+/// A frozen selection owner makes `xsel` wait on the X server forever. On the
+/// single-threaded runtime that would freeze the TUI with it, so the reader is
+/// killed at the deadline and the paste becomes an error line.
+#[test]
+fn read_clipboard_via_kills_a_hung_reader_at_the_deadline() {
+    let cmds: &[(&str, &[&str])] = &[("sleep", &["30"])];
+    let started = std::time::Instant::now();
+    let err = read_clipboard_via(cmds, Duration::from_millis(150))
+        .expect_err("a hung reader must not block")
+        .to_string();
+    let elapsed = started.elapsed();
+    assert!(err.contains("timed out"), "{err}");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "took {elapsed:?}; the deadline must bound the wait, not `sleep 30`"
+    );
+}
+
+#[test]
+fn read_clipboard_via_hung_reader_falls_through_to_the_next() {
+    let cmds: &[(&str, &[&str])] = &[("sleep", &["30"]), ("sh", &["-c", "printf 'after'"])];
+    assert_eq!(
+        read_clipboard_via(cmds, Duration::from_millis(150))
+            .expect("the second reader should answer")
+            .as_deref(),
+        Some("after")
+    );
+}
+
+#[test]
+fn read_from_clipboard_does_not_panic() {
+    // Environment-dependent by nature: a clipboard reader may be missing, the
+    // clipboard may be empty (`Ok(None)`), or a display may be unreachable.
+    // Only the contract matters here — never panic, and never mistake an empty
+    // clipboard for a failure.
+    if let Err(e) = read_from_clipboard() {
+        assert!(!e.to_string().is_empty(), "an error must explain itself");
+    }
 }
 
 #[test]

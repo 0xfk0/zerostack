@@ -20,7 +20,9 @@ use crate::ui::input::InputEditor;
 use crate::ui::permission_handler::handle_permission_request;
 use crate::ui::pickers::rewind::RewindOutcome;
 use crate::ui::pickers::switcher::SwitcherResult;
-use crate::ui::renderer::{self as renderer_mod, ChainPrompt, Renderer, copy_to_clipboard};
+use crate::ui::renderer::{
+    self as renderer_mod, ChainPrompt, Renderer, copy_to_clipboard, read_from_clipboard,
+};
 use crate::ui::slash::{apply_prompt_model, handle_compress, handle_slash};
 #[cfg(feature = "git-worktree")]
 use crate::ui::state::MergeRequest;
@@ -990,6 +992,23 @@ impl<'a> App<'a> {
                         self.run_slash_command(&format!("/prompt {name}")).await?;
                     }
                     SwitcherResult::Cancelled => {}
+                }
+            }
+            return Ok(());
+        }
+
+        // Ctrl+V pastes the system clipboard. Read here rather than left to the
+        // terminal because xterm cannot paste the CLIPBOARD selection at all:
+        // its built-in bindings insert PRIMARY, so `Ctrl+Shift+V` never reaches
+        // us as a key event. `Ok(None)` is an empty clipboard and stays silent,
+        // exactly like a terminal paste of nothing.
+        if key.code == KeyCode::Char('v') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            match read_from_clipboard() {
+                Ok(Some(text)) => self.input.handle_paste(text),
+                Ok(None) => {}
+                Err(e) => {
+                    self.renderer
+                        .write_line(&format!("clipboard paste failed: {}", e), C_ERROR)?;
                 }
             }
             return Ok(());

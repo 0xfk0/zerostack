@@ -290,6 +290,10 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
     write_result(ctx.renderer, "  Ctrl+R                 toggle reasoning");
     write_result(
         ctx.renderer,
+        "  Ctrl+V                 paste system clipboard",
+    );
+    write_result(
+        ctx.renderer,
         "  Alt+M                  quick-model switcher",
     );
     write_result(ctx.renderer, "  Alt+P                  prompt switcher");
