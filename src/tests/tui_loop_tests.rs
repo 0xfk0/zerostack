@@ -767,6 +767,35 @@ async fn paste_multiline_submits_as_one_message() {
     app.teardown().await;
 }
 
+/// Regression: XTerm's `Shift+Insert` / middle-click paste delivers a selection
+/// with CR instead of LF line endings, so a multi-line selection arrived as one
+/// CR-separated line and was submitted that way. It must come back out as real
+/// newlines — the model should never see embedded `\r`.
+#[tokio::test]
+async fn paste_with_cr_line_endings_submits_as_newlines() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![vec!["got it"]]).await;
+
+    app.inject(UserEvent::Paste("line1\rline2\r".to_string()))
+        .await;
+    app.inject(enter_key()).await;
+
+    step_until(&mut app, |a| {
+        !a.is_running() && a.session().messages.len() == 2
+    })
+    .await;
+
+    let messages = &app.session().messages;
+    assert_eq!(messages[0].role, MessageRole::User);
+    assert_eq!(messages[0].content.as_str(), "line1\nline2\n");
+    assert!(
+        !messages[0].content.contains('\r'),
+        "a CR must never survive into the submitted prompt"
+    );
+
+    app.teardown().await;
+}
+
 #[tokio::test]
 async fn ctrl_r_toggles_reasoning_visibility() {
     let _guard = acquire();

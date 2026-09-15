@@ -142,6 +142,50 @@ fn swap_enter_and_newline_leaves_other_keys_alone() {
     }
 }
 
+/// XTerm's `Shift+Insert` (and middle-click) converts every LF in the inserted
+/// selection to CR, so a pasted selection arrives CR-separated. Those CRs are
+/// literal characters to the editor — it splits rows on '\n' only and a raw
+/// '\r' resets the terminal cursor — so a multi-line selection rendered as one
+/// mostly-blank row. `handle_paste` must normalize them to LF.
+#[test]
+fn paste_normalizes_cr_line_endings() {
+    let mut editor = InputEditor::new();
+    editor.handle_paste("1\r2\r3\r".to_string());
+    assert_eq!(editor.buffer.as_str(), "1\n2\n3\n");
+    assert_eq!(
+        editor.cursor,
+        editor.buffer.len(),
+        "cursor must land past the normalized text"
+    );
+}
+
+#[test]
+fn paste_collapses_crlf_without_inventing_blank_lines() {
+    let mut editor = InputEditor::new();
+    editor.handle_paste("a\r\nb\r\n".to_string());
+    assert_eq!(editor.buffer.as_str(), "a\nb\n");
+}
+
+#[test]
+fn paste_leaves_lf_untouched() {
+    // The common case (every terminal with bracketed paste) must not gain a
+    // copy or change a single byte.
+    let mut editor = InputEditor::new();
+    editor.handle_paste("a\nb".to_string());
+    assert_eq!(editor.buffer.as_str(), "a\nb");
+    assert_eq!(editor.cursor, 3);
+}
+
+#[test]
+fn paste_inserts_at_cursor_and_normalizes() {
+    let mut editor = InputEditor::new();
+    type_str(&mut editor, "ac");
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_paste("b\r".to_string());
+    assert_eq!(editor.buffer.as_str(), "ab\nc");
+    assert_eq!(editor.cursor, 3);
+}
+
 /// With swapping on the app exchanges the keys before `handle_key`, so a real
 /// `Enter` reaches the editor as `Ctrl+J` (newline) and a real `Ctrl+J` as
 /// `Enter` (submit). Asserted through the swap helper, i.e. end to end on the

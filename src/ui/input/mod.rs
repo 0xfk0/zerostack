@@ -352,6 +352,19 @@ impl InputEditor {
     }
 
     pub fn handle_paste(&mut self, data: String) {
+        // XTerm (and other X11 terminals) deliver an inserted selection with CR
+        // line endings: `Shift+Insert` and middle-click paste turn every LF in
+        // the selection into a CR. Inserted verbatim those CRs are not line
+        // breaks to the editor — the input box splits rows on '\n' only, so the
+        // whole paste stayed one row, and a raw '\r' in that row moves the
+        // terminal cursor to column 0 so later characters overwrite it (a
+        // multi-line selection rendered as one mostly-blank line). Normalize to
+        // LF. CRLF collapses before lone CR so no blank line is invented.
+        let data = if data.contains('\r') {
+            data.replace("\r\n", "\n").replace('\r', "\n")
+        } else {
+            data
+        };
         self.buffer.insert_str(self.cursor, &data);
         self.cursor += data.len();
         self.history_pos = None;
