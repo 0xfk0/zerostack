@@ -1089,6 +1089,12 @@ impl<'a> App<'a> {
                 self.stop_event_thread();
                 self.input.open_in_editor();
                 self.rebind_event_thread();
+                // The editor ran on the alternate screen, which `write_resume`
+                // wipes on the way back. Mark both regions dirty so the next
+                // frame repaints over it instead of leaving a stale fragment;
+                // same reason Ctrl-Z does this after it resumes.
+                self.renderer.invalidate();
+                self.renderer.resize();
             }
             return Ok(());
         }
