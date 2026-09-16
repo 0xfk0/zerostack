@@ -165,6 +165,10 @@ fn ctrl_g() -> UserEvent {
     UserEvent::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL))
 }
 
+fn ctrl_t() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+}
+
 /// Type `text` into the input editor and submit it with Enter.
 async fn type_and_submit(app: &App<'static>, text: &str) {
     for c in text.chars() {
@@ -519,6 +523,24 @@ async fn ctrl_g_is_inert_without_a_terminal_and_does_not_type_or_exit() {
     app.inject(ctrl_g()).await;
     assert!(!step_broke(&mut app).await, "Ctrl-G must not exit the loop");
     assert_eq!(app.input_buffer(), "", "Ctrl-G must not type a literal 'g'");
+
+    // And the buffer is still usable afterwards.
+    app.inject(char_key('a')).await;
+    assert!(!step_broke(&mut app).await);
+    assert_eq!(app.input_buffer(), "a");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn ctrl_t_is_inert_without_a_terminal_and_does_not_type_or_exit() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![]).await;
+
+    // Headless has no terminal guard, so Ctrl-T must not try to launch a
+    // pager: `show_transcript` returns early and nothing is typed.
+    app.inject(ctrl_t()).await;
+    assert!(!step_broke(&mut app).await, "Ctrl-T must not exit the loop");
+    assert_eq!(app.input_buffer(), "", "Ctrl-T must not type a literal 't'");
 
     // And the buffer is still usable afterwards.
     app.inject(char_key('a')).await;

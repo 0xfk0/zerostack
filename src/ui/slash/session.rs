@@ -5,6 +5,14 @@ use compact_str::CompactString;
 use crate::ui::events::render_session;
 use crate::ui::slash::{SlashCtx, undo_last, write_error, write_ok, write_result};
 
+/// The pager needs the terminal — and the app's crossterm reader stopped — so
+/// the actual work is deferred to the app, exactly like `/memory editor`.
+fn handle_transcript() -> anyhow::Result<()> {
+    Err(anyhow::Error::new(
+        crate::ui::slash::SlashOutcome::DeferTranscript,
+    ))
+}
+
 fn format_session_line(s: &crate::session::Session) -> String {
     let last = s
         .messages
@@ -39,6 +47,7 @@ pub async fn handle(parts: &[&str], ctx: &mut SlashCtx<'_>) -> anyhow::Result<()
         "/retry" => handle_retry(ctx).await,
         "/quit" | "/exit" => handle_quit(ctx).await,
         "/history" => handle_history(ctx).await,
+        "/transcript" => handle_transcript(),
         #[cfg(feature = "export")]
         "/export" => handle_export(parts, ctx).await,
         #[cfg(feature = "export")]

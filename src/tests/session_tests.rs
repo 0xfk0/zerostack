@@ -427,3 +427,43 @@ fn adding_a_message_invalidates_the_redo_point() {
     assert!(s.rewind_undo.is_none());
     assert!(!s.redo());
 }
+
+#[test]
+fn transcript_lists_every_role_with_a_heading() {
+    let mut s = Session::new("openai", "gpt-5", 128000, "refactor auth");
+    s.add_message(MessageRole::User, "hello");
+    s.add_message(MessageRole::Assistant, "hi there");
+    s.add_message(MessageRole::System, "summary of earlier turns");
+    s.add_tool_call("bash", &serde_json::json!({ "command": "ls" }));
+    s.add_message(MessageRole::SubagentToolCall, "read src/main.rs");
+
+    let t = s.to_transcript();
+    assert!(t.starts_with("# zerostack transcript — refactor auth\n"));
+    assert!(t.contains("openai/gpt-5\n"));
+    assert!(t.contains("5 messages"));
+    assert!(t.contains("## you\n\nhello\n"));
+    assert!(t.contains("## gpt-5\n\nhi there\n"));
+    assert!(t.contains("## system\n\nsummary of earlier turns\n"));
+    assert!(t.contains("## tool call\n"));
+    assert!(t.contains("## subagent tool call\n\nread src/main.rs\n"));
+}
+
+#[test]
+fn transcript_heading_falls_back_to_the_session_id() {
+    let s = Session::new("openai", "gpt-5", 128000, "");
+    let id_prefix = &s.id[..8.min(s.id.len())];
+    assert!(s.to_transcript().contains(&format!("session {id_prefix}")));
+}
+
+#[test]
+fn transcript_mentions_compactions() {
+    let mut s = Session::new("openai", "gpt-5", 128000, "x");
+    s.add_message(MessageRole::User, "a");
+    s.add_message(MessageRole::Assistant, "b");
+    s.compress("the summary".to_string(), 2, 1234);
+
+    let t = s.to_transcript();
+    assert!(t.contains("compacted 2 messages (~1234 tokens saved)"));
+    // The summary is inserted as a System message and shown like any other.
+    assert!(t.contains("## system\n\nthe summary\n"));
+}

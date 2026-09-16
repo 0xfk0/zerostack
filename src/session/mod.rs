@@ -723,6 +723,54 @@ impl Session {
         (None, 0)
     }
 
+    /// Render the conversation as plain Markdown-ish text, for a read-only
+    /// external view (`Ctrl-T`, `/transcript`). Content is emitted verbatim:
+    /// over-long tool results were already head/tail truncated when recorded
+    /// (see `tool_result_content`), so this cannot grow without bound.
+    pub fn to_transcript(&self) -> String {
+        let title = if self.name.is_empty() {
+            format!("session {}", &self.id[..8.min(self.id.len())])
+        } else {
+            self.name.to_string()
+        };
+        let mut out = String::new();
+        out.push_str(&format!("# zerostack transcript — {title}\n\n"));
+        out.push_str(&format!(
+            "{}/{}\n{} · {} messages · {} in / {} out tokens · ${:.4}\n",
+            self.provider,
+            self.model,
+            self.created_at,
+            self.messages.len(),
+            self.total_input_tokens,
+            self.total_output_tokens,
+            self.total_cost,
+        ));
+        for c in &self.compactions {
+            out.push_str(&format!(
+                "compacted {} messages (~{} tokens saved) at {}\n",
+                c.summarized_count, c.token_savings, c.created_at
+            ));
+        }
+        for msg in &self.messages {
+            out.push_str(&format!("\n## {}\n\n", Self::role_label(msg.role, self)));
+            out.push_str(msg.content.trim_end());
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Human label for a role in the transcript view, matching the HTML export.
+    fn role_label(role: MessageRole, session: &Session) -> String {
+        match role {
+            MessageRole::User => "you".to_string(),
+            MessageRole::Assistant => session.model.to_string(),
+            MessageRole::System => "system".to_string(),
+            MessageRole::ToolCall => "tool call".to_string(),
+            MessageRole::ToolResult => "tool result".to_string(),
+            MessageRole::SubagentToolCall => "subagent tool call".to_string(),
+        }
+    }
+
     pub fn compress(&mut self, summary: String, first_kept_index: usize, token_savings: u64) {
         let summarized_count = first_kept_index;
         let summary_tokens = Self::estimate_tokens(&summary);

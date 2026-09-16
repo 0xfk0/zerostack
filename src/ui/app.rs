@@ -1099,6 +1099,13 @@ impl<'a> App<'a> {
             return Ok(());
         }
 
+        if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            // Read-only transcript view. `show_transcript` is a no-op without a
+            // terminal (no pager to host), so headless tests stay inert.
+            self.show_transcript()?;
+            return Ok(());
+        }
+
         if key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.run_lazygit()?;
             return Ok(());
@@ -1946,6 +1953,9 @@ impl<'a> App<'a> {
                         self.renderer
                             .write_line(&format!("returned from editing {}", path_str), C_AGENT)?;
                     }
+                    crate::ui::slash::SlashOutcome::DeferTranscript => {
+                        self.show_transcript()?;
+                    }
                 }
             }
             #[cfg(feature = "git-worktree")]
@@ -2302,6 +2312,34 @@ impl<'a> App<'a> {
             let _ = std::process::Command::new("lazygit").status();
         });
         self.rebind_event_thread();
+        Ok(())
+    }
+
+    /// Show the session transcript in the pager (`pager` config, else `$PAGER`,
+    /// else `less`) as a read-only view: the text is piped to the child's stdin
+    /// and never written back. A no-op without a real terminal, so headless
+    /// tests (no guard, no event thread) leave it alone.
+    fn show_transcript(&mut self) -> anyhow::Result<()> {
+        if self._terminal_guard.is_none() {
+            return Ok(());
+        }
+        let text = self.ui.session.to_transcript();
+        let pager = self.ui.cfg.resolve_pager();
+        // The reader polls the tty the pager uses for its own keys (`q`,
+        // space): stop it for the child's lifetime, as every other hand-over
+        // of the terminal does.
+        self.stop_event_thread();
+        let result =
+            crate::ui::terminal::run_pager(self.ui.cfg.resolve_mouse_capture(), &pager, &text);
+        self.rebind_event_thread();
+        // The pager ran on the alternate screen, which `write_resume` wipes:
+        // repaint from scratch rather than trust the stale frame.
+        self.renderer.invalidate();
+        self.renderer.resize();
+        if let Err(e) = result {
+            self.renderer
+                .write_line(&format!("cannot run pager '{}': {}", pager, e), C_ERROR)?;
+        }
         Ok(())
     }
 

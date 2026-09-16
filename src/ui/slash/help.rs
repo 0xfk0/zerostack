@@ -241,6 +241,10 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
         ctx.renderer,
         "  /history               show global chat history",
     );
+    write_result(
+        ctx.renderer,
+        "  /transcript            view the session transcript in $PAGER",
+    );
     write_result(ctx.renderer, "  /quit [/exit]          exit zerostack");
     write_result(
         ctx.renderer,
@@ -295,6 +299,10 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
     write_result(
         ctx.renderer,
         "  Ctrl+V                 paste system clipboard",
+    );
+    write_result(
+        ctx.renderer,
+        "  Ctrl+T                 view the transcript in $PAGER",
     );
     write_result(
         ctx.renderer,

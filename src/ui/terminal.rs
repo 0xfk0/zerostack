@@ -85,6 +85,29 @@ where
     f()
 }
 
+/// Run `command` with `input` piped to its stdin while the TUI is suspended,
+/// for read-only external views (the transcript in `$PAGER`). `command` is a
+/// full command line (`less`, `view -`), so it must be able to read a pipe
+/// rather than a file. The child inherits the terminal and can page
+/// interactively; the caller must stop the crossterm reader first, since it
+/// polls the same tty the pager reads its keystrokes from.
+pub fn run_pager(mouse_capture: bool, command: &str, input: &str) -> std::io::Result<()> {
+    let (prog, args) = parse_editor_command(command);
+    suspend_tui(mouse_capture, || {
+        let mut child = std::process::Command::new(&prog)
+            .args(&args)
+            .stdin(std::process::Stdio::piped())
+            .spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            // The pager may quit before reading everything (`q`), so a broken
+            // pipe here is expected, not a failure.
+            let _ = stdin.write_all(input.as_bytes());
+        }
+        let _ = child.wait();
+        Ok(())
+    })
+}
+
 /// Stop the current process with `SIGTSTP` (Ctrl-Z job control). The kernel
 /// stops the whole process; resumption arrives later as `SIGCONT`. Must be
 /// called with the terminal restored to cooked mode (see [`suspend_tui`]),

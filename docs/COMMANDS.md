@@ -23,6 +23,7 @@ All slash commands are available from the TUI input prompt.
 | `/sessions delete <id-or-name>` | Delete a session by its ID prefix or name. |
 | `/rename <name>` | Rename the current session. |
 | `/history` | Show global chat history (last 10 entries across sessions). |
+| `/transcript` | View the current session transcript (plain text, not JSON) in the pager — see `pager` under Config. Same as `Ctrl+T`. |
 | `/export [file]` | Export the current session to a standalone HTML page (default `zerostack-session-<id>.html`), or to JSONL when the file ends in `.jsonl`. Requires the `export` feature (default-on). |
 | `/import <file>` | Import a session from a JSONL export (or a native session JSON file), save it, and load it. Requires the `export` feature. |
 | `/share` | Upload the HTML export as a secret GitHub gist and print the URL. Requires `GITHUB_TOKEN` or `GH_TOKEN` and the `export` feature. |
@@ -276,6 +277,7 @@ layers did not consume.
 | `Alt+M` | Open the quick-model switcher (`Tab` toggles Quick/Provider, `Enter` applies immediately via `/models <name>`). |
 | `Alt+P` | Open the prompt switcher (`Enter` applies immediately via `/prompt <name>`, including `%%mode=` and `[prompt_to_model]`). |
 | `Ctrl+G` | Open the current input in the system editor (`$EDITOR`). |
+| `Ctrl+T` | View the current session transcript in the pager, read-only: the text is piped to `$PAGER` (or `less`). The `pager` config option overrides `$PAGER`. Same as `/transcript`. |
 | `Ctrl+H` | Launch `lazygit` (git TUI) in the project directory. |
 | `Ctrl+V` | Paste the system clipboard at the cursor. Read with `wl-paste`/`xclip`/`xsel`/`pbpaste`, killed after 1s; an empty clipboard does nothing, and no reader installed reports an error. Unlike the copy path there is no OSC 52 fallback — terminals refuse the read query. |
 | `Esc` | Close the active picker / cancel the current overlay; while a selection is active, clear it. |

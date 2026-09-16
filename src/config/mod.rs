@@ -204,6 +204,11 @@ pub struct Config {
     pub shell: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor: Option<String>,
+    /// Pager command for the read-only transcript view (`Ctrl-T`, `/transcript`).
+    /// Overrides `$PAGER`; when unset, `$PAGER` wins, then `less`. A command
+    /// line, so arguments are allowed (`view -`, `less -R`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pager: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_keys: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -362,6 +367,18 @@ impl Config {
 
     pub fn resolve_mouse_capture(&self) -> bool {
         self.mouse_capture.unwrap_or(true)
+    }
+
+    /// Pager command for the read-only transcript view (`Ctrl-T`, `/transcript`):
+    /// the `pager` config option if set, else `$PAGER`, else `less`. Returned as
+    /// a command line so arguments work (`view -`, `less -R`); a blank value
+    /// falls through to the next source.
+    pub fn resolve_pager(&self) -> String {
+        self.pager
+            .clone()
+            .or_else(|| std::env::var("PAGER").ok())
+            .filter(|p| !p.trim().is_empty())
+            .unwrap_or_else(|| "less".to_string())
     }
 
     /// Which selection copy operations target. Default: the system clipboard.
@@ -707,6 +724,24 @@ code = "deepseek-v4-pro"
     fn resolve_mouse_capture_defaults_to_true() {
         let cfg = Config::default();
         assert!(cfg.resolve_mouse_capture());
+    }
+
+    #[test]
+    fn resolve_pager_prefers_the_config_option_over_the_environment() {
+        // The config value is a full command line, args included (`view -`).
+        let cfg = Config {
+            pager: Some("view -".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(cfg.resolve_pager(), "view -");
+    }
+
+    #[test]
+    fn toml_deserializes_pager() {
+        let toml_str = "pager = \"less -R\"\n";
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.pager.as_deref(), Some("less -R"));
+        assert_eq!(cfg.resolve_pager(), "less -R");
     }
 
     #[test]

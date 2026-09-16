@@ -14,6 +14,9 @@ pub enum SlashOutcome {
     DeferReview {
         message: String,
     },
+    /// Hand the terminal back to the app so it can page the session transcript:
+    /// the slash layer cannot stop the crossterm reader or suspend the TUI.
+    DeferTranscript,
     #[cfg(feature = "memory")]
     DeferEditor {
         path: PathBuf,
@@ -32,6 +35,7 @@ impl fmt::Display for SlashOutcome {
             }
             Self::DeferInit => write!(f, "defer init"),
             Self::DeferReview { message } => write!(f, "defer review: {}", message),
+            Self::DeferTranscript => write!(f, "defer transcript"),
             #[cfg(feature = "memory")]
             Self::DeferEditor { path } => write!(f, "defer editor: {}", path.display()),
             #[cfg(feature = "mcp")]

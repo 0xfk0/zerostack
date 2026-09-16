@@ -39,6 +39,7 @@ const BASE_COMMANDS: &[&str] = &[
     "/theme",
     "/thinking",
     "/toggle",
+    "/transcript",
     "/tutor",
     "/tutorial",
     "/undo",
