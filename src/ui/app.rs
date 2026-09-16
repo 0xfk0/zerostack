@@ -1078,8 +1078,18 @@ impl<'a> App<'a> {
         }
 
         if key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            self.rebind_event_thread();
-            self.input.open_in_editor();
+            // Only a real terminal can host an external editor: in headless
+            // tests there is no terminal guard and no stdin to hand over.
+            if self._terminal_guard.is_some() {
+                // Stop the reader before handing the terminal to the editor and
+                // rebind only once it exits. Leave it running and both race for
+                // stdin, so the editor receives a corrupted subset of keystrokes
+                // and never sees its quit command (vim restarting on `:wq`).
+                // Mirrors `run_lazygit`.
+                self.stop_event_thread();
+                self.input.open_in_editor();
+                self.rebind_event_thread();
+            }
             return Ok(());
         }
 
@@ -2242,11 +2252,21 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    fn rebind_event_thread(&mut self) {
+    /// Stop the crossterm event thread and wait for it to exit.
+    ///
+    /// Any code that hands the terminal to another program (an editor, lazygit)
+    /// must call this *before* the child starts: the reader thread polls stdin,
+    /// and both it and the child would race for the same keystrokes — the child
+    /// then receives a corrupted subset and e.g. vim never sees `:wq`.
+    fn stop_event_thread(&mut self) {
         if let Some(h) = self.event_handle.take() {
             self.running.store(false, Ordering::Relaxed);
             let _ = h.join();
         }
+    }
+
+    fn rebind_event_thread(&mut self) {
+        self.stop_event_thread();
         self.running = Arc::new(AtomicBool::new(true));
         let (new_tx, new_rx) = mpsc::channel(64);
         self.user_tx = new_tx;
@@ -2270,10 +2290,7 @@ impl<'a> App<'a> {
             )?;
             return Ok(());
         }
-        if let Some(h) = self.event_handle.take() {
-            self.running.store(false, Ordering::Relaxed);
-            let _ = h.join();
-        }
+        self.stop_event_thread();
         let mouse_capture = self.ui.cfg.resolve_mouse_capture();
         crate::ui::terminal::suspend_tui(mouse_capture, || {
             let _ = std::process::Command::new("lazygit").status();
