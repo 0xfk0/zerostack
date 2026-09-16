@@ -1936,6 +1936,12 @@ impl<'a> App<'a> {
                             .or_else(|| std::env::var("EDITOR").ok())
                             .unwrap_or_else(|| "editor".to_string());
                         let mouse_capture = self.ui.cfg.resolve_mouse_capture();
+                        // Stop the reader before handing the terminal to the
+                        // editor and rebind only once it exits, exactly as
+                        // Ctrl-G and lazygit do: leave it running and both race
+                        // for stdin, so the editor sees a corrupted subset of
+                        // keystrokes and can miss its quit command.
+                        self.stop_event_thread();
                         crate::ui::terminal::suspend_tui(mouse_capture, || {
                             let (prog, args) = crate::ui::terminal::parse_editor_command(&editor);
                             let _ = std::process::Command::new(prog)
@@ -1943,6 +1949,13 @@ impl<'a> App<'a> {
                                 .arg(&path_str)
                                 .status();
                         });
+                        self.rebind_event_thread();
+                        // `write_resume` re-enters the alternate screen with
+                        // `Clear(All)`, wiping it out from under the renderer.
+                        // Mark both regions dirty so the whole frame repaints;
+                        // `render_session` below only redraws the chat.
+                        self.renderer.invalidate();
+                        self.renderer.resize();
                         render_session(
                             &mut self.renderer,
                             self.ui.session,
