@@ -11,7 +11,7 @@ pub(crate) mod roles;
 pub(crate) mod slash;
 pub(crate) mod state;
 pub(crate) mod statusline;
-mod terminal;
+pub(crate) mod terminal;
 pub(crate) mod utils;
 
 use std::io;

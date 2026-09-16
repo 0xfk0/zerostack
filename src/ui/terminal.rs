@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use crossterm::ExecutableCommand;
+use crossterm::QueueableCommand;
 use crossterm::cursor::Show;
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
@@ -20,10 +20,7 @@ impl SuspendGuard {
     pub fn suspend(mouse_capture: bool) -> Self {
         let _ = terminal::disable_raw_mode();
         let mut stdout = std::io::stdout();
-        if mouse_capture {
-            let _ = stdout.execute(DisableMouseCapture);
-        }
-        let _ = stdout.execute(LeaveAlternateScreen);
+        let _ = write_suspend(&mut stdout, mouse_capture);
         let _ = stdout.flush();
         Self { mouse_capture }
     }
@@ -32,14 +29,50 @@ impl SuspendGuard {
 impl Drop for SuspendGuard {
     fn drop(&mut self) {
         let mut stdout = std::io::stdout();
-        let _ = stdout.execute(EnterAlternateScreen);
-        let _ = stdout.execute(Clear(ClearType::All));
-        if self.mouse_capture {
-            let _ = stdout.execute(EnableMouseCapture);
-        }
+        let _ = write_resume(&mut stdout, self.mouse_capture);
         let _ = terminal::enable_raw_mode();
         let _ = stdout.flush();
     }
+}
+
+/// Emit the sequences that hand the terminal back to the shell (or a child
+/// program such as `$EDITOR`). Exact reverse of [`write_resume`].
+///
+/// Two things matter beyond leaving the alternate screen. First, undo every
+/// input mode [`TerminalGuard::new`] turned on — bracketed paste, focus change,
+/// and the kitty keyboard protocol. A plain editor does not understand those
+/// escape sequences and renders them as garbage when they arrive mid-session,
+/// and the shell would inherit them too. Second, emit `Show`: crossterm's
+/// alternate screen restores only the cursor *position* (`?1049`), never its
+/// visibility, so the caret the renderer hid before suspending would otherwise
+/// persist onto the shell prompt (invisible cursor).
+pub(crate) fn write_suspend(w: &mut impl Write, mouse_capture: bool) -> std::io::Result<()> {
+    w.queue(PopKeyboardEnhancementFlags)?;
+    w.queue(DisableBracketedPaste)?;
+    w.queue(DisableFocusChange)?;
+    if mouse_capture {
+        w.queue(DisableMouseCapture)?;
+    }
+    w.queue(Show)?;
+    w.queue(LeaveAlternateScreen)?;
+    Ok(())
+}
+
+/// Re-enter the TUI after [`write_suspend`]: alternate screen, then the input
+/// modes [`TerminalGuard::new`] enables, in the same order. Raw mode is toggled
+/// separately by the caller (it is a `termios` call, not a queued sequence).
+pub(crate) fn write_resume(w: &mut impl Write, mouse_capture: bool) -> std::io::Result<()> {
+    w.queue(EnterAlternateScreen)?;
+    w.queue(Clear(ClearType::All))?;
+    if mouse_capture {
+        w.queue(EnableMouseCapture)?;
+    }
+    w.queue(EnableBracketedPaste)?;
+    w.queue(EnableFocusChange)?;
+    w.queue(PushKeyboardEnhancementFlags(
+        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
+    ))?;
+    Ok(())
 }
 
 /// Suspend the TUI, run `f`, then restore it. Single shared helper to avoid
@@ -86,16 +119,8 @@ pub struct TerminalGuard {
 impl TerminalGuard {
     pub fn new(mouse_capture: bool) -> std::io::Result<Self> {
         let mut stdout = std::io::stdout();
-        stdout.execute(EnterAlternateScreen)?;
-        stdout.execute(Clear(ClearType::All))?;
-        if mouse_capture {
-            stdout.execute(EnableMouseCapture)?;
-        }
-        stdout.execute(EnableBracketedPaste)?;
-        stdout.execute(EnableFocusChange)?;
-        let _ = stdout.execute(PushKeyboardEnhancementFlags(
-            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
-        ));
+        write_resume(&mut stdout, mouse_capture)?;
+        stdout.flush()?;
         terminal::enable_raw_mode()?;
         Ok(TerminalGuard { mouse_capture })
     }
@@ -105,14 +130,7 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = terminal::disable_raw_mode();
         let mut stdout = std::io::stdout();
-        let _ = stdout.execute(PopKeyboardEnhancementFlags);
-        let _ = stdout.execute(DisableBracketedPaste);
-        let _ = stdout.execute(DisableFocusChange);
-        if self.mouse_capture {
-            let _ = stdout.execute(DisableMouseCapture);
-        }
-        let _ = stdout.execute(Show);
-        let _ = stdout.execute(LeaveAlternateScreen);
+        let _ = write_suspend(&mut stdout, self.mouse_capture);
         let _ = stdout.flush();
     }
 }
