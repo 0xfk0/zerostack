@@ -17,7 +17,7 @@ use crate::config::ClipboardSelection;
 use super::feed::{BlockStyle, Feed, style_from_color};
 use super::markdown::word_wrap;
 use super::statusline::StatusSpan;
-use super::utils::{char_display_width, display_width, resolve_color};
+use super::utils::{char_display_width, display_width, resolve_color, take_display_width};
 
 /// Terminal output sink for [`Renderer`]: every ANSI write and terminal-size
 /// read goes through this trait. Production uses [`CrosstermBackend`] (stdout
@@ -1363,8 +1363,8 @@ impl Renderer {
         if !prefix.is_empty() {
             let fg = self.color(Color::DarkYellow);
             write!(self.backend, "{}", SetForegroundColor(fg))?;
-            let take = prefix.chars().take(budget).collect::<String>();
-            budget -= display_width(&take);
+            let take = take_display_width(prefix, budget);
+            budget -= display_width(take);
             write!(self.backend, "{}", take)?;
         }
 
@@ -1397,8 +1397,8 @@ impl Renderer {
                     let fgc = fg.unwrap_or(Color::DarkGrey);
                     let fgc = self.color(fgc);
                     write!(self.backend, "{}", SetForegroundColor(fgc))?;
-                    let piece: String = text.chars().take(budget).collect();
-                    budget = budget.saturating_sub(display_width(&piece));
+                    let piece = take_display_width(text, budget);
+                    budget = budget.saturating_sub(display_width(piece));
                     write!(self.backend, "{}", piece)?;
                     write!(self.backend, "{}", ResetColor)?;
                     if let Some(bg) = self.status_bg {

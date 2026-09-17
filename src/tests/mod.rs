@@ -15,6 +15,8 @@ mod bash_tests;
 #[cfg(test)]
 mod btw_tests;
 #[cfg(test)]
+mod byte_char_splice_tests;
+#[cfg(test)]
 mod chain_tests;
 #[cfg(test)]
 mod checker_tests;

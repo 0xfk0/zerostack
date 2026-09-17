@@ -45,6 +45,10 @@ pub fn swap_enter_and_newline(key: KeyEvent) -> KeyEvent {
 
 pub struct InputEditor {
     pub buffer: CompactString,
+    /// Cursor is a BYTE offset into `buffer`, always on a char boundary.
+    /// (Unlike `InputRow.start` in the renderer, which is a char offset.)
+    /// All splices must slice by bytes — `buffer[..n]` / `buffer[n..]` —
+    /// never `chars().take(n)` / `chars().skip(n)`, which count chars.
     pub cursor: usize,
     history: Vec<CompactString>,
     history_pos: Option<usize>,
@@ -435,12 +439,13 @@ impl InputEditor {
                 }
                 KeyCode::Char('u') => {
                     if self.cursor > 0 {
-                        let deleted: String = self.buffer.chars().take(self.cursor).collect();
-                        let remaining: String = self.buffer.chars().skip(self.cursor).collect();
-                        self.buffer = CompactString::new(&remaining);
+                        // `cursor` is a byte offset on a char boundary; kill
+                        // the byte range [0, cursor) in place.
+                        let deleted = self.buffer[..self.cursor].to_string();
+                        self.buffer.replace_range(..self.cursor, "");
                         self.cursor = 0;
                         if !deleted.is_empty() {
-                            self.push_kill(CompactString::new(&deleted));
+                            self.push_kill(deleted.into());
                         }
                     }
                     self.yank_pos = None;
@@ -448,11 +453,10 @@ impl InputEditor {
                 }
                 KeyCode::Char('k') => {
                     if self.cursor < self.buffer.len() {
-                        let deleted: String = self.buffer.chars().skip(self.cursor).collect();
-                        let before: String = self.buffer.chars().take(self.cursor).collect();
-                        self.buffer = CompactString::new(&before);
+                        let deleted = self.buffer[self.cursor..].to_string();
+                        self.buffer.replace_range(self.cursor.., "");
                         if !deleted.is_empty() {
-                            self.push_kill(CompactString::new(&deleted));
+                            self.push_kill(deleted.into());
                         }
                     }
                     self.yank_pos = None;
@@ -513,13 +517,11 @@ impl InputEditor {
                     if let Some(pos) = self.yank_pos
                         && self.kill_ring.len() > 1
                     {
+                        // Drop the previous yank, then insert the rotated one.
+                        // `start` is `cursor - yank_len`, always <= cursor.
                         let start = self.cursor.saturating_sub(self.yank_len);
-                        if start <= self.cursor {
-                            let before: String = self.buffer.chars().take(start).collect();
-                            let after: String = self.buffer.chars().skip(self.cursor).collect();
-                            self.buffer = CompactString::new(format!("{}{}", before, after));
-                            self.cursor = start;
-                        }
+                        self.buffer.replace_range(start..self.cursor, "");
+                        self.cursor = start;
                         let new_pos = if pos == 0 {
                             self.kill_ring.len() - 1
                         } else {
@@ -615,61 +617,47 @@ impl InputEditor {
                 self.draft = None;
                 self.yank_pos = None;
 
+                // The prefixes are ASCII literals, so their byte length is a
+                // char-safe slice point; `chars().count() == 1` detects the
+                // first (possibly multibyte) char typed after the prefix.
                 if (self.picker.is_none() || !self.picker.as_ref().is_some_and(|p| p.active()))
                     && self.buffer.starts_with("/prompt ")
+                    && self.buffer["/prompt ".len()..].chars().count() == 1
+                    && c != ' '
                 {
-                    let after_prefix: String = self.buffer.chars().skip("/prompt ".len()).collect();
-                    if !after_prefix.is_empty() && c != ' ' {
-                        let query_len = after_prefix.len();
-                        if query_len == 1 {
-                            self.start_prompt_picker();
-                            if let Some(Picker::Prefixed(ref mut pp, _)) = self.picker {
-                                pp.char_input(c);
-                            }
-                        }
+                    self.start_prompt_picker();
+                    if let Some(Picker::Prefixed(ref mut pp, _)) = self.picker {
+                        pp.char_input(c);
                     }
                 }
                 if (self.picker.is_none() || !self.picker.as_ref().is_some_and(|p| p.active()))
                     && self.buffer.starts_with("/models ")
+                    && self.buffer["/models ".len()..].chars().count() == 1
+                    && c != ' '
                 {
-                    let after_prefix: String = self.buffer.chars().skip("/models ".len()).collect();
-                    if !after_prefix.is_empty() && c != ' ' {
-                        let query_len = after_prefix.len();
-                        if query_len == 1 {
-                            self.start_models_picker();
-                            if let Some(Picker::Models(ref mut mp)) = self.picker {
-                                mp.char_input(c);
-                            }
-                        }
+                    self.start_models_picker();
+                    if let Some(Picker::Models(ref mut mp)) = self.picker {
+                        mp.char_input(c);
                     }
                 }
                 if (self.picker.is_none() || !self.picker.as_ref().is_some_and(|p| p.active()))
                     && self.buffer.starts_with("/theme ")
+                    && self.buffer["/theme ".len()..].chars().count() == 1
+                    && c != ' '
                 {
-                    let after_prefix: String = self.buffer.chars().skip("/theme ".len()).collect();
-                    if !after_prefix.is_empty() && c != ' ' {
-                        let query_len = after_prefix.len();
-                        if query_len == 1 {
-                            self.start_theme_picker();
-                            if let Some(Picker::Prefixed(ref mut tp, _)) = self.picker {
-                                tp.char_input(c);
-                            }
-                        }
+                    self.start_theme_picker();
+                    if let Some(Picker::Prefixed(ref mut tp, _)) = self.picker {
+                        tp.char_input(c);
                     }
                 }
                 if (self.picker.is_none() || !self.picker.as_ref().is_some_and(|p| p.active()))
                     && self.buffer.starts_with("/provider ")
+                    && self.buffer["/provider ".len()..].chars().count() == 1
+                    && c != ' '
                 {
-                    let after_prefix: String =
-                        self.buffer.chars().skip("/provider ".len()).collect();
-                    if !after_prefix.is_empty() && c != ' ' {
-                        let query_len = after_prefix.len();
-                        if query_len == 1 {
-                            self.start_provider_picker();
-                            if let Some(Picker::Prefixed(ref mut pp, _)) = self.picker {
-                                pp.char_input(c);
-                            }
-                        }
+                    self.start_provider_picker();
+                    if let Some(Picker::Prefixed(ref mut pp, _)) = self.picker {
+                        pp.char_input(c);
                     }
                 }
 
@@ -780,8 +768,10 @@ impl InputEditor {
     fn cursor_up(&mut self) -> Option<CompactString> {
         let (line, col) = cursor_to_line_col(&self.buffer, self.cursor);
         if line > 0 {
-            let line_len =
-                line_end(&self.buffer, self.cursor) - line_start(&self.buffer, self.cursor);
+            let start = line_start(&self.buffer, self.cursor);
+            let line_len = self.buffer[start..line_end(&self.buffer, self.cursor)]
+                .chars()
+                .count();
             let target = line_col_to_cursor(
                 &self.buffer,
                 line - 1,
@@ -798,8 +788,10 @@ impl InputEditor {
         let (line, col) = cursor_to_line_col(&self.buffer, self.cursor);
         let total = count_lines(&self.buffer);
         if line + 1 < total {
-            let line_len =
-                line_end(&self.buffer, self.cursor) - line_start(&self.buffer, self.cursor);
+            let start = line_start(&self.buffer, self.cursor);
+            let line_len = self.buffer[start..line_end(&self.buffer, self.cursor)]
+                .chars()
+                .count();
             let target = line_col_to_cursor(
                 &self.buffer,
                 line + 1,
@@ -810,6 +802,11 @@ impl InputEditor {
         } else {
             self.history_down()
         }
+    }
+
+    /// Most recent kill (front of the ring); also lets tests assert on it.
+    pub(crate) fn last_kill(&self) -> Option<&str> {
+        self.kill_ring.first().map(|s| s.as_str())
     }
 
     fn push_kill(&mut self, text: CompactString) {

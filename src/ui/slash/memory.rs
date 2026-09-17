@@ -135,7 +135,8 @@ fn handle_read(parts: &[&str], ctx: &mut SlashCtx<'_>) {
     if let Some(p) = path {
         match std::fs::read_to_string(&p) {
             Ok(s) => {
-                let capped: String = if s.len() > 4000 {
+                // Cap by CHARS so the threshold matches the truncation unit.
+                let capped: String = if s.chars().count() > 4000 {
                     s.chars().take(4000).collect::<String>() + "\n…[truncated]"
                 } else {
                     s

@@ -7,6 +7,7 @@ use super::models::ModelsPicker;
 
 use crate::ui::input::Picker;
 use crate::ui::input::cursor::prev_char_boundary;
+use crate::ui::utils::split_at_byte;
 
 pub fn handle_file_key(
     buffer: &mut CompactString,
@@ -25,10 +26,12 @@ pub fn handle_file_key(
             } else {
                 let at_pos = buffer.rfind('@');
                 if let Some(at) = at_pos {
-                    let before: String = buffer.chars().take(at).collect();
-                    let after: String = buffer.chars().skip(at + 1).collect();
+                    // `at` is a byte offset; `at + 1` skips the '@'.
+                    let (before, after) = split_at_byte(buffer, at);
+                    let after = &after[1..];
+                    let new_cursor = before.len();
                     *buffer = format!("{}{}", before, after).into();
-                    *cursor = at;
+                    *cursor = new_cursor;
                 }
                 picker.deactivate();
             }
@@ -49,10 +52,11 @@ pub fn handle_file_key(
             } else {
                 let at_pos = buffer.rfind('@');
                 if let Some(at) = at_pos {
-                    let before: String = buffer.chars().take(at).collect();
-                    let after: String = buffer.chars().skip(at + 1).collect();
+                    let (before, after) = split_at_byte(buffer, at);
+                    let after = &after[1..];
+                    let new_cursor = before.len();
                     *buffer = format!("{}{}", before, after).into();
-                    *cursor = at;
+                    *cursor = new_cursor;
                 }
                 picker.deactivate();
                 true
@@ -82,9 +86,10 @@ pub fn handle_file_key(
                 let path_str = path.to_string_lossy().to_string();
                 let at_pos = buffer.rfind('@');
                 if let Some(at) = at_pos {
-                    let before: String = buffer.chars().take(at).collect();
-                    let after_offset = at + 1 + picker.query.len();
-                    let after: String = buffer.chars().skip(after_offset).collect();
+                    // Byte offsets: the query occupies `query.len()` bytes
+                    // right after the '@'.
+                    let (before, rest) = split_at_byte(buffer, at);
+                    let after = &rest[1 + picker.query.len()..];
                     let new_len = before.len() + path_str.len();
                     *buffer = format!("{}{}{}", before, path_str, after).into();
                     *cursor = new_len;
@@ -96,10 +101,11 @@ pub fn handle_file_key(
         KeyCode::Esc => {
             let at_pos = buffer.rfind('@');
             if let Some(at) = at_pos {
-                let before: String = buffer.chars().take(at).collect();
-                let after: String = buffer.chars().skip(at + 1 + picker.query.len()).collect();
+                let (before, rest) = split_at_byte(buffer, at);
+                let after = &rest[1 + picker.query.len()..];
+                let new_cursor = before.len();
                 *buffer = format!("{}{}", before, after).into();
-                *cursor = at;
+                *cursor = new_cursor;
             }
             picker.deactivate();
             true
@@ -142,10 +148,7 @@ pub fn handle_command_key(
                 *cursor = prev_char_boundary(buffer, *cursor);
             } else {
                 if buffer.starts_with('/') {
-                    let after: String = buffer
-                        .chars()
-                        .skip(1 + picker.query.chars().count())
-                        .collect();
+                    let (_, after) = split_at_byte(buffer, 1 + picker.query.len());
                     *buffer = format!("/{}", after).into();
                     *cursor = 1;
                 }
@@ -183,10 +186,7 @@ pub fn handle_command_key(
                 (true, None)
             } else {
                 if buffer.starts_with('/') {
-                    let after: String = buffer
-                        .chars()
-                        .skip(1 + picker.query.chars().count())
-                        .collect();
+                    let (_, after) = split_at_byte(buffer, 1 + picker.query.len());
                     *buffer = format!("/{}", after).into();
                     *cursor = 1;
                 }
@@ -217,16 +217,16 @@ pub fn handle_command_key(
             if let Some(cmd) = picker.selected_name() {
                 let selected = cmd.to_string();
                 let slash_pos = buffer.find('/').unwrap_or(0);
-                let before: String = buffer.chars().take(slash_pos).collect();
-                let after_offset = slash_pos + 1 + picker.query.chars().count();
-                let after: String = buffer.chars().skip(after_offset).collect();
+                let (before, rest) = split_at_byte(buffer, slash_pos);
+                let after = &rest[1 + picker.query.len()..];
                 let insertion = if after.is_empty() || after.starts_with(' ') {
                     format!("{} ", selected)
                 } else {
                     format!("{}{}", selected, after)
                 };
+                let new_cursor = before.len() + selected.len() + 1;
                 *buffer = format!("{}{}", before, insertion).into();
-                *cursor = before.len() + selected.len() + 1;
+                *cursor = new_cursor;
 
                 if selected == "/prompt" && !ctx.prompt_names.is_empty() {
                     picker.deactivate();
@@ -278,11 +278,8 @@ pub fn handle_command_key(
         }
         KeyCode::Esc => {
             let slash_pos = buffer.find('/').unwrap_or(0);
-            let before: String = buffer.chars().take(slash_pos).collect();
-            let after: String = buffer
-                .chars()
-                .skip(slash_pos + 1 + picker.query.chars().count())
-                .collect();
+            let (before, rest) = split_at_byte(buffer, slash_pos);
+            let after = &rest[1 + picker.query.len()..];
             *buffer = format!("{}/{}", before, after).into();
             *cursor = slash_pos + 1;
             picker.deactivate();
@@ -318,10 +315,10 @@ pub fn handle_prefixed_key(
                 }
                 *cursor = prev_char_boundary(buffer, *cursor);
             } else {
-                let after_offset = prefix_len + picker.query.chars().count();
+                let after_offset = prefix_len + picker.query.len();
                 if buffer.len() >= after_offset {
-                    let before: String = buffer.chars().take(prefix_len).collect();
-                    let after: String = buffer.chars().skip(after_offset).collect();
+                    let before = &buffer[..prefix_len];
+                    let (_, after) = split_at_byte(buffer, after_offset);
                     *buffer = format!("{}{}", before, after).into();
                     *cursor = prefix_len;
                 }
@@ -358,10 +355,10 @@ pub fn handle_prefixed_key(
                 *cursor = prev_char_boundary(buffer, *cursor);
                 true
             } else {
-                let after_offset = prefix_len + picker.query.chars().count();
+                let after_offset = prefix_len + picker.query.len();
                 if buffer.len() >= after_offset {
-                    let before: String = buffer.chars().take(prefix_len).collect();
-                    let after: String = buffer.chars().skip(after_offset).collect();
+                    let before = &buffer[..prefix_len];
+                    let (_, after) = split_at_byte(buffer, after_offset);
                     *buffer = format!("{}{}", before, after).into();
                     *cursor = prefix_len;
                 }
@@ -390,9 +387,9 @@ pub fn handle_prefixed_key(
         }
         KeyCode::Enter => {
             if let Some(name) = picker.selected_name() {
-                let after_offset = prefix_len + picker.query.chars().count();
-                let before: String = buffer.chars().take(prefix_len).collect();
-                let after: String = buffer.chars().skip(after_offset).collect();
+                let after_offset = prefix_len + picker.query.len();
+                let before = &buffer[..prefix_len];
+                let (_, after) = split_at_byte(buffer, after_offset);
                 *buffer = format!("{}{}{}", before, name, after).into();
                 *cursor = prefix_len + name.len();
             }
@@ -400,10 +397,10 @@ pub fn handle_prefixed_key(
             true
         }
         KeyCode::Esc => {
-            let after_offset = prefix_len + picker.query.chars().count();
+            let after_offset = prefix_len + picker.query.len();
             if buffer.len() >= after_offset {
-                let before: String = buffer.chars().take(prefix_len).collect();
-                let after: String = buffer.chars().skip(after_offset).collect();
+                let before = &buffer[..prefix_len];
+                let (_, after) = split_at_byte(buffer, after_offset);
                 *buffer = format!("{}{}", before, after).into();
                 *cursor = prefix_len;
             }
@@ -440,10 +437,10 @@ pub fn handle_models_key(
                 }
                 *cursor = prev_char_boundary(buffer, *cursor);
             } else {
-                let after_offset = prefix_len + picker.query.chars().count();
+                let after_offset = prefix_len + picker.query.len();
                 if buffer.len() >= after_offset {
-                    let before: String = buffer.chars().take(prefix_len).collect();
-                    let after: String = buffer.chars().skip(after_offset).collect();
+                    let before = &buffer[..prefix_len];
+                    let (_, after) = split_at_byte(buffer, after_offset);
                     *buffer = format!("{}{}", before, after).into();
                     *cursor = prefix_len;
                 }
@@ -480,10 +477,10 @@ pub fn handle_models_key(
                 *cursor = prev_char_boundary(buffer, *cursor);
                 true
             } else {
-                let after_offset = prefix_len + picker.query.chars().count();
+                let after_offset = prefix_len + picker.query.len();
                 if buffer.len() >= after_offset {
-                    let before: String = buffer.chars().take(prefix_len).collect();
-                    let after: String = buffer.chars().skip(after_offset).collect();
+                    let before = &buffer[..prefix_len];
+                    let (_, after) = split_at_byte(buffer, after_offset);
                     *buffer = format!("{}{}", before, after).into();
                     *cursor = prefix_len;
                 }
@@ -505,9 +502,9 @@ pub fn handle_models_key(
         }
         KeyCode::Enter => {
             if let Some(name) = picker.selected_name() {
-                let after_offset = prefix_len + picker.query.chars().count();
-                let before: String = buffer.chars().take(prefix_len).collect();
-                let after: String = buffer.chars().skip(after_offset).collect();
+                let after_offset = prefix_len + picker.query.len();
+                let before = &buffer[..prefix_len];
+                let (_, after) = split_at_byte(buffer, after_offset);
                 *buffer = format!("{}{}{}", before, name, after).into();
                 *cursor = prefix_len + name.len();
             }
@@ -515,10 +512,10 @@ pub fn handle_models_key(
             true
         }
         KeyCode::Esc => {
-            let after_offset = prefix_len + picker.query.chars().count();
+            let after_offset = prefix_len + picker.query.len();
             if buffer.len() >= after_offset {
-                let before: String = buffer.chars().take(prefix_len).collect();
-                let after: String = buffer.chars().skip(after_offset).collect();
+                let before = &buffer[..prefix_len];
+                let (_, after) = split_at_byte(buffer, after_offset);
                 *buffer = format!("{}{}", before, after).into();
                 *cursor = prefix_len;
             }

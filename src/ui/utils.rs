@@ -26,6 +26,32 @@ pub(crate) fn char_display_width(c: char) -> usize {
     unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)
 }
 
+/// Splits `s` at byte index `byte`, clamping back to the nearest char
+/// boundary at or before it. Cursors in the input editor and pickers are
+/// byte offsets kept on char boundaries by construction, so the clamp is
+/// only defense for offsets derived elsewhere.
+pub(crate) fn split_at_byte(s: &str, byte: usize) -> (&str, &str) {
+    let mut i = byte.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    (&s[..i], &s[i..])
+}
+
+/// Longest prefix of `s` that fits in `max_cols` terminal columns (a wide
+/// char that would overflow is not included).
+pub(crate) fn take_display_width(s: &str, max_cols: usize) -> &str {
+    let mut cols = 0usize;
+    for (i, c) in s.char_indices() {
+        let w = char_display_width(c);
+        if cols + w > max_cols {
+            return &s[..i];
+        }
+        cols += w;
+    }
+    s
+}
+
 /// Resolves a color based on monochrome mode.
 #[inline]
 pub(crate) fn resolve_color(color: Color, monochrome: bool) -> Color {

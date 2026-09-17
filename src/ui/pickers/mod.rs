@@ -12,7 +12,7 @@ use crossterm::cursor::MoveTo;
 use crossterm::style::{Color, ResetColor, SetForegroundColor};
 use crossterm::terminal::Clear;
 
-use super::utils::resolve_color;
+use super::utils::{resolve_color, take_display_width};
 
 pub(crate) fn fuzzy_score(item: &str, query: &str) -> Option<i32> {
     if query.is_empty() {
@@ -113,7 +113,7 @@ pub(crate) fn draw_picker_list(
             Clear(crossterm::terminal::ClearType::CurrentLine)
         )?;
 
-        let truncated: String = item.chars().take(cols.saturating_sub(3) as usize).collect();
+        let truncated = take_display_width(item, cols.saturating_sub(3) as usize);
 
         if i == selected {
             write!(
