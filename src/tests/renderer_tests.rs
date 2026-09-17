@@ -298,7 +298,9 @@ fn chat_margin_reduces_content_width() {
 
 mod dirty {
     use crate::ui::feed::BlockStyle;
-    use crate::ui::renderer::{BottomRedrawPlan, BottomSnapshot, PromptSnapshot, Renderer};
+    use crate::ui::renderer::{
+        BottomRedrawPlan, BottomSnapshot, FakeBackend, PromptSnapshot, Renderer,
+    };
     use crate::ui::statusline::StatusSpan;
 
     fn bottom_snapshot() -> BottomSnapshot {
@@ -347,8 +349,11 @@ mod dirty {
 
     #[test]
     fn scroll_triggers_chat_redraw() {
-        let mut r = Renderer::new().unwrap();
-        // Enough lines to overflow the (fallback 80x24) viewport.
+        // `Renderer::new()` reads the real terminal size: on a tty with 44+
+        // rows the 40 lines below fit the viewport, scrolling is a no-op and
+        // nothing gets marked dirty. Pin the geometry the test assumes.
+        let mut r = Renderer::with_backend(Box::new(FakeBackend::new(80, 24)));
+        // Enough lines to overflow the 80x24 viewport (20 visible rows).
         for i in 0..40 {
             r.feed_mut()
                 .push_line(BlockStyle::Plain, format!("line {i}"));
