@@ -136,6 +136,8 @@ mod terminal_tests;
 #[cfg(test)]
 mod todo_tests;
 #[cfg(test)]
+mod tool_summary_tests;
+#[cfg(test)]
 mod tools_filter_tests;
 #[cfg(test)]
 mod tools_mod_tests;

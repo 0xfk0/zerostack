@@ -148,8 +148,12 @@ pub(crate) fn format_tool_call_summary(name: &str, args: &serde_json::Value) -> 
         return format_task_summary(obj);
     }
 
+    if name == "read" {
+        return format_read_summary(obj);
+    }
+
     let primary_keys: &[&str] = match name {
-        "read" | "write" | "edit" | "list_dir" => &["path"],
+        "write" | "edit" | "list_dir" => &["path"],
         "grep" => &["pattern", "path"],
         "find_files" => &["pattern"],
         "bash" => &["command"],
@@ -177,6 +181,41 @@ pub(crate) fn format_tool_call_summary(name: &str, args: &serde_json::Value) -> 
     } else {
         format!("{} {}", name, shown.join(" "))
     }
+}
+
+/// `read` shows the file plus the line range the model asked for:
+/// `read "f" 100-200`, `read "f" 100-...` when it gave no `limit`, and a bare
+/// `read "f"` when it gave neither.
+fn format_read_summary(obj: &serde_json::Map<String, serde_json::Value>) -> String {
+    let path = match obj.get("path") {
+        Some(serde_json::Value::String(path)) => display_value(path),
+        _ => return "read".to_string(),
+    };
+    match read_line_range(obj) {
+        Some(range) => format!("read {} {}", path, range),
+        None => format!("read {}", path),
+    }
+}
+
+/// The `read` tool takes a 1-indexed `offset` and a line `limit`; render the
+/// inclusive range they select. `None` when the model gave neither, so an
+/// unrestricted read stays unadorned.
+fn read_line_range(obj: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    let offset = obj.get("offset").and_then(serde_json::Value::as_u64);
+    let limit = obj
+        .get("limit")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|limit| *limit > 0);
+    if offset.is_none() && limit.is_none() {
+        return None;
+    }
+    // The tool clamps a missing/zero offset to the first line, so mirror that
+    // rather than printing a `0-` range.
+    let start = offset.unwrap_or(1).max(1);
+    Some(match limit {
+        Some(limit) => format!("{}-{}", start, start + limit - 1),
+        None => format!("{}-...", start),
+    })
 }
 
 fn format_task_summary(obj: &serde_json::Map<String, serde_json::Value>) -> String {
