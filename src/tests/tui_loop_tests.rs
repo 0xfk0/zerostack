@@ -149,6 +149,10 @@ fn ctrl_d() -> UserEvent {
     UserEvent::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
 }
 
+fn left_key() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+}
+
 fn ctrl_c() -> UserEvent {
     UserEvent::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
 }
@@ -334,6 +338,54 @@ async fn ctrl_d_exits_when_quit_armed_disabled() {
     // Default (`quit_armed` off): a single Ctrl-D quits, as before.
     app.inject(ctrl_d()).await;
     app.run().await.expect("run should exit on single Ctrl-D");
+    app.teardown().await;
+}
+
+/// With text in the prompt, `Ctrl-D` is a delete, not a quit: it must never
+/// exit the loop, and it must remove the character under the cursor. Once the
+/// prompt is empty again the same key quits.
+#[tokio::test]
+async fn ctrl_d_deletes_instead_of_quitting_while_the_prompt_has_text() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![]).await;
+
+    for c in "abc".chars() {
+        app.inject(char_key(c)).await;
+        assert!(!step_broke(&mut app).await);
+    }
+    // Move the cursor between 'a' and 'b'.
+    for _ in 0..2 {
+        app.inject(left_key()).await;
+        assert!(!step_broke(&mut app).await);
+    }
+    assert_eq!(app.input_buffer(), "abc");
+
+    app.inject(ctrl_d()).await;
+    assert!(
+        !step_broke(&mut app).await,
+        "Ctrl-D with text must not exit the loop"
+    );
+    assert_eq!(
+        app.input_buffer(),
+        "ac",
+        "Ctrl-D must delete under the cursor"
+    );
+
+    // Back to the start: Ctrl-D eats the remaining chars one by one.
+    app.inject(left_key()).await;
+    assert!(!step_broke(&mut app).await);
+    app.inject(ctrl_d()).await;
+    assert!(!step_broke(&mut app).await);
+    app.inject(ctrl_d()).await;
+    assert!(!step_broke(&mut app).await);
+    assert_eq!(app.input_buffer(), "");
+
+    // Empty prompt: Ctrl-D is a quit again.
+    app.inject(ctrl_d()).await;
+    assert!(
+        step_broke(&mut app).await,
+        "Ctrl-D on an empty prompt must exit"
+    );
     app.teardown().await;
 }
 

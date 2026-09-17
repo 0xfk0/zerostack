@@ -315,10 +315,14 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
     write_result(
         ctx.renderer,
         if ctx.cfg.resolve_quit_armed() {
-            "  Ctrl+C / Ctrl+D        interrupt / quit (two presses to quit)"
+            "  Ctrl+C                 interrupt / quit (two presses to quit)"
         } else {
-            "  Ctrl+C / Ctrl+D        interrupt/quit"
+            "  Ctrl+C                 interrupt/quit"
         },
+    );
+    write_result(
+        ctx.renderer,
+        "  Ctrl+D                 quit (empty prompt) / delete char right",
     );
     write_result(
         ctx.renderer,

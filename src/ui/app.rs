@@ -858,8 +858,12 @@ impl<'a> App<'a> {
             UserEvent::Key(key) => {
                 let is_ctrl_c =
                     key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
-                let is_ctrl_d =
-                    key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL);
+                // Ctrl-D only means "quit" while the prompt is empty. With text
+                // in the buffer it falls through to the editor, where it deletes
+                // the character under the cursor (readline's binding).
+                let is_ctrl_d = key.code == KeyCode::Char('d')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.input.buffer.is_empty();
                 if is_ctrl_c || is_ctrl_d {
                     if self.btw_inflight > 0 {
                         for (_, h) in self.btw_abort.drain(..) {

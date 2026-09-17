@@ -267,7 +267,7 @@ layers did not consume.
 | Shortcut | Action |
 | -------- | ------ |
 | `Ctrl+C` | Cancel the running response (or a `/btw`), or quit when idle. With `quit_armed`, quitting needs two presses — see `Ctrl+D`. |
-| `Ctrl+D` | Quit when idle. With `quit_armed`, the first idle press of `Ctrl+C`/`Ctrl+D` arms a pending quit and any other key cancels it; a second consecutive press of either key exits. |
+| `Ctrl+D` | Quit when idle **and the prompt is empty**. With text in the prompt it deletes the character under the cursor instead, so it never quits mid-edit. With `quit_armed`, the first idle press of `Ctrl+C`/`Ctrl+D` arms a pending quit and any other key cancels it; a second consecutive press of either key exits. |
 | `Ctrl+Z` | Suspend to the shell: the TUI leaves raw mode/alternate screen and the process stops (`SIGTSTP`); resume with `fg`, which restores both on `SIGCONT`. An in-flight provider request may time out while suspended. |
 | `Ctrl+L` | Clear the screen and repaint everything from scratch. |
 | `Ctrl+R` | Toggle reasoning visibility. |

@@ -458,6 +458,8 @@ impl InputEditor {
                     self.yank_pos = None;
                     return None;
                 }
+                // Delete the char under the cursor. Reachable because the app
+                // only claims Ctrl-D as "quit" while the prompt is empty.
                 KeyCode::Char('d') => {
                     if self.cursor < self.buffer.len() {
                         self.buffer.remove(self.cursor);

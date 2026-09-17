@@ -80,6 +80,29 @@ fn right_arrow_steps_one_char_not_one_byte() {
     assert_eq!(editor.cursor, 3); // after 'å' (skipped 2 bytes)
 }
 
+/// `Ctrl+D` deletes the character under the cursor (to its right); it is only
+/// "quit" when the prompt is empty, which the app enforces before dispatch.
+#[test]
+fn ctrl_d_deletes_the_char_under_the_cursor() {
+    let mut editor = InputEditor::new();
+    type_str(&mut editor, "abc");
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Left));
+    assert_eq!(editor.cursor, 1); // between 'a' and 'b'
+    editor.handle_key(press_with(KeyCode::Char('d'), KeyModifiers::CONTROL));
+    assert_eq!(editor.buffer.as_str(), "ac");
+    assert_eq!(editor.cursor, 1);
+}
+
+#[test]
+fn ctrl_d_at_end_of_buffer_is_a_noop() {
+    let mut editor = InputEditor::new();
+    type_str(&mut editor, "ab");
+    editor.handle_key(press_with(KeyCode::Char('d'), KeyModifiers::CONTROL));
+    assert_eq!(editor.buffer.as_str(), "ab");
+    assert_eq!(editor.cursor, 2);
+}
+
 #[test]
 fn enter_returns_buffer_and_resets() {
     let mut editor = InputEditor::new();
