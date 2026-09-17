@@ -604,6 +604,115 @@ mod cursor_positioning {
     }
 }
 
+/// Soft wrapping of the input editor (`:set wrap`): long lines are split into
+/// visual rows for display only — no newline is ever inserted into the buffer.
+mod input_wrap {
+    use crate::ui::renderer::{FakeBackend, Renderer};
+
+    /// Width = `cols - 2` (the prompt), so 20 columns gives an 18-column field.
+    /// Wrapping is on, since these tests exercise the wrapped layout.
+    fn renderer(cols: u16) -> Renderer {
+        let mut r = Renderer::with_backend(Box::new(FakeBackend::new(cols, 24)));
+        r.set_statusline_height(1);
+        r.set_input_wrap(true);
+        r
+    }
+
+    #[test]
+    fn short_input_stays_on_one_row() {
+        assert_eq!(renderer(80).wrapped_input_rows("hello"), vec!["hello"]);
+    }
+
+    #[test]
+    fn wraps_on_word_boundaries() {
+        let r = renderer(20);
+        assert_eq!(
+            r.wrapped_input_rows("the quick brown fox jumps"),
+            vec!["the quick brown", "fox jumps"]
+        );
+    }
+
+    #[test]
+    fn hard_breaks_a_word_wider_than_the_row() {
+        let r = renderer(20); // 18 columns
+        assert_eq!(
+            r.wrapped_input_rows(&"a".repeat(40)),
+            vec!["a".repeat(18), "a".repeat(18), "a".repeat(4)]
+        );
+    }
+
+    #[test]
+    fn explicit_newlines_start_new_rows() {
+        assert_eq!(
+            renderer(80).wrapped_input_rows("one\ntwo"),
+            vec!["one", "two"]
+        );
+    }
+
+    #[test]
+    fn exact_fit_gets_a_trailing_caret_row() {
+        // A line that fills the width exactly gets an empty row so the caret at
+        // end-of-line has somewhere to sit (Vim behaves the same).
+        assert_eq!(
+            renderer(20).wrapped_input_rows(&"a".repeat(18)),
+            vec!["a".repeat(18), String::new()]
+        );
+    }
+
+    #[test]
+    fn wrapped_rows_never_contain_a_newline() {
+        let rows = renderer(20).wrapped_input_rows("alpha beta gamma delta epsilon zeta eta theta");
+        assert!(rows.len() > 1);
+        assert!(rows.iter().all(|r| !r.contains('\n')));
+    }
+
+    #[test]
+    fn click_lands_on_a_wrapped_row() {
+        let mut r = renderer(20);
+        let input = "the quick brown fox jumps";
+        r.draw_bottom(input, 0, &[], false).unwrap();
+        // Second input row (row 20 + 1) is "fox jumps"; a click at its text
+        // start maps to the 'f' at buffer char index 16.
+        assert_eq!(r.input_cursor_for_click(21, 2, input), Some(16));
+        // First row, just before "quick" (i.e. past "the ") maps to index 4.
+        assert_eq!(r.input_cursor_for_click(20, 6, input), Some(4));
+    }
+}
+
+/// Default layout (wrapping off): a long line stays on one row and is scrolled
+/// horizontally so the caret stays visible. Explicit newlines still start rows.
+mod no_wrap {
+    use crate::ui::renderer::{FakeBackend, Renderer};
+
+    fn renderer(cols: u16) -> Renderer {
+        let mut r = Renderer::with_backend(Box::new(FakeBackend::new(cols, 24)));
+        r.set_statusline_height(1);
+        r
+    }
+
+    #[test]
+    fn long_line_is_not_split() {
+        let line = "the quick brown fox jumps over the lazy dog";
+        assert_eq!(
+            renderer(20).wrapped_input_rows(line),
+            vec![line.to_string()]
+        );
+    }
+
+    #[test]
+    fn explicit_newlines_still_start_their_own_rows() {
+        assert_eq!(
+            renderer(20).wrapped_input_rows("one\ntwo"),
+            vec!["one", "two"]
+        );
+    }
+
+    #[test]
+    fn short_input_stays_on_one_row() {
+        assert_eq!(renderer(80).wrapped_input_rows("hello"), vec!["hello"]);
+    }
+}
+
 /// Streamed writes must not break a line just because a chunk boundary fell
 /// inside it. Providers routinely batch a line's final token together with the
 /// newline that ends it (".\n"), which used to strand the "." on its own row

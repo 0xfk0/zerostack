@@ -271,6 +271,11 @@ pub struct Renderer {
     partial: CompactString,
     partial_style: BlockStyle,
     scroll_offset: usize,
+    /// Soft-wrap long input lines on word boundaries (display-only). When
+    /// `false`, a long line stays on one row and scrolls horizontally.
+    input_wrap: bool,
+    /// Horizontal (column) scroll applied to the caret's row when wrapping is
+    /// off. Always 0 while wrapping is on.
     input_scroll_offset: usize,
     input_vscroll_offset: usize,
     input_max_vscroll: usize,
@@ -281,8 +286,10 @@ pub struct Renderer {
     input_prompt_width: usize,
     input_first_visible: usize,
     input_visible_line_count: usize,
+    /// Horizontal scroll actually applied on the caret's row this frame.
     input_h_scroll: usize,
-    input_cursor_line: usize,
+    /// Visual (soft-wrapped) row index the caret sits on.
+    input_cursor_vrow: usize,
     monochrome: bool,
     chat_bg: Option<Color>,
     input_bg: Option<Color>,
@@ -321,6 +328,98 @@ pub struct Renderer {
     bottom_cursor: Option<(u16, u16)>,
 }
 
+/// Width of the input prompt prefix (`"> "`, or the two-cell spinner that
+/// replaces it while a run is in flight). Input wrapping is measured against
+/// the remaining columns.
+const INPUT_PROMPT_WIDTH: usize = 2;
+
+/// One visual (soft-wrapped) row of the input buffer.
+struct InputRow {
+    /// Index of the `'\n'`-separated logical line this row belongs to.
+    logical: usize,
+    /// Char offset within that logical line where this row's text starts.
+    start: usize,
+    /// Row text: at most the wrap width in display columns.
+    text: String,
+}
+
+/// Soft-wrap the input buffer into visual rows of at most `width` display
+/// columns, preferring to break on word boundaries and falling back to a hard
+/// break only when a single word is wider than a row. No `'\n'` is ever
+/// inserted into the buffer — this is display-only, like Vim's `:set wrap`.
+fn wrap_input_rows(input: &str, width: usize) -> SmallVec<[InputRow; 8]> {
+    let mut out: SmallVec<[InputRow; 8]> = SmallVec::new();
+    for (logical, line) in input.split('\n').enumerate() {
+        if line.is_empty() || width == 0 {
+            out.push(InputRow {
+                logical,
+                start: 0,
+                text: line.to_string(),
+            });
+            continue;
+        }
+        let chars: SmallVec<[char; 64]> = line.chars().collect();
+        let len = chars.len();
+        let mut i = 0usize;
+        while i < len {
+            // Longest prefix of `chars[i..]` that fits in `width` columns.
+            let mut w = 0usize;
+            let mut j = i;
+            while j < len {
+                let cw = char_display_width(chars[j]);
+                if w + cw > width {
+                    break;
+                }
+                w += cw;
+                j += 1;
+            }
+            if j >= len {
+                let text: String = chars[i..].iter().collect();
+                let full = display_width(&text) == width;
+                out.push(InputRow {
+                    logical,
+                    start: i,
+                    text,
+                });
+                // A final row that exactly fills the width gets a trailing empty
+                // row so the end-of-line caret has somewhere to sit (Vim's
+                // `wrap` shows the caret on the next screen line too).
+                if full {
+                    out.push(InputRow {
+                        logical,
+                        start: len,
+                        text: String::new(),
+                    });
+                }
+                break;
+            }
+            // Break on the last word boundary in `chars[i..j]`; when no space
+            // fits (a word wider than the row), hard-break at `j`, or after one
+            // char when not even a single char fits.
+            let end = if j > i {
+                match (i..j).rev().find(|&k| chars[k].is_whitespace()) {
+                    Some(sp) if sp > i => sp,
+                    _ => j,
+                }
+            } else {
+                (i + 1).min(len)
+            };
+            out.push(InputRow {
+                logical,
+                start: i,
+                text: chars[i..end].iter().collect(),
+            });
+            i = end;
+            // Drop the single space we broke on so it is not indented onto the
+            // next row (display-only; the buffer keeps it).
+            if i < len && chars[i].is_whitespace() {
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 impl Renderer {
     pub fn new() -> io::Result<Self> {
         Ok(Self::with_backend(Box::new(CrosstermBackend {
@@ -336,6 +435,7 @@ impl Renderer {
             partial: CompactString::new(""),
             partial_style: BlockStyle::Plain,
             scroll_offset: 0,
+            input_wrap: false,
             input_scroll_offset: 0,
             input_vscroll_offset: 0,
             input_max_vscroll: 0,
@@ -345,7 +445,7 @@ impl Renderer {
             input_first_visible: 0,
             input_visible_line_count: 0,
             input_h_scroll: 0,
-            input_cursor_line: 0,
+            input_cursor_vrow: 0,
             monochrome: false,
             chat_bg: None,
             input_bg: None,
@@ -396,6 +496,24 @@ impl Renderer {
     pub fn set_chat_margin(&mut self, margin: u16) {
         let (cols, _) = self.terminal_size();
         self.chat_margin = margin.min(cols.saturating_sub(8));
+    }
+
+    /// Enable soft word-wrapping of long input lines (display-only; no line
+    /// feeds are inserted into the buffer). Off by default. Call once at
+    /// startup.
+    pub fn set_input_wrap(&mut self, wrap: bool) {
+        self.input_wrap = wrap;
+    }
+
+    /// Display width the input text is laid out against: the terminal width
+    /// minus the prompt when wrapping is on, or `usize::MAX` (no wrap — one row
+    /// per logical line, horizontally scrolled) when it is off.
+    fn input_wrap_width(&self, cols: u16) -> usize {
+        if self.input_wrap {
+            (cols as usize).saturating_sub(INPUT_PROMPT_WIDTH)
+        } else {
+            usize::MAX
+        }
     }
 
     /// Emit the chat left-margin gutter (spaces in the chat background) at the
@@ -568,13 +686,27 @@ impl Renderer {
 
     /// Number of rows the input area will occupy for the given content. Kept in
     /// sync with the height logic used while drawing the input in `draw_bottom`.
-    fn input_visible_height(&self, input_line: &str, rows: u16) -> usize {
+    fn input_visible_height(&self, input_line: &str, cols: u16, rows: u16) -> usize {
         if self.permission_prompt.is_some() || self.chain_prompt.is_some() {
             return 2;
         }
         let available_rows = rows.saturating_sub(self.statusline_reserve()) as usize;
         let max_input_rows = available_rows.min((available_rows * 3 / 10).max(5));
-        input_line.split('\n').count().min(max_input_rows).max(1)
+        wrap_input_rows(input_line, self.input_wrap_width(cols))
+            .len()
+            .min(max_input_rows)
+            .max(1)
+    }
+
+    /// Test helper: the visual rows the input would be wrapped into at the
+    /// backend's current width.
+    #[cfg(test)]
+    pub fn wrapped_input_rows(&self, input_line: &str) -> Vec<String> {
+        let (cols, _) = self.terminal_size();
+        wrap_input_rows(input_line, self.input_wrap_width(cols))
+            .into_iter()
+            .map(|r| r.text)
+            .collect()
     }
 
     /// Recompute the input height and reconcile `prev_input_height` before the
@@ -582,8 +714,8 @@ impl Renderer {
     /// is about to use. Without this, a height change (e.g. clearing or pasting
     /// text) leaves the viewport drawn for the old size until the next redraw.
     pub fn sync_input_height(&mut self, input_line: &str) -> io::Result<()> {
-        let (_, rows) = self.terminal_size();
-        let new_height = self.input_visible_height(input_line, rows);
+        let (cols, rows) = self.terminal_size();
+        let new_height = self.input_visible_height(input_line, cols, rows);
         self.clear_shrunk_rows(self.prev_input_height, new_height)?;
         self.prev_input_height = new_height;
         Ok(())
@@ -806,23 +938,25 @@ impl Renderer {
             return None;
         }
         let visible_idx = (row - self.input_base_row) as usize;
-        let line_idx = self.input_first_visible + visible_idx;
-        let lines: SmallVec<[&str; 4]> = input_line.split('\n').collect();
-        let line_text = lines.get(line_idx)?;
+        let vrow_idx = self.input_first_visible + visible_idx;
+        let (cols, _) = self.terminal_size();
+        let vrows = wrap_input_rows(input_line, self.input_wrap_width(cols));
+        let vrow = vrows.get(vrow_idx)?;
 
-        // Display column the click lands on, within the line's text. Clicks on
-        // the prompt (or to its left) snap to the start of the line.
-        let click_col = col as usize;
-        let mut target_display = click_col.saturating_sub(self.input_prompt_width);
-        if line_idx == self.input_cursor_line {
+        // Display column the click lands on, within the row's text. Clicks on
+        // the prompt (or to its left) snap to the start of the row. When
+        // wrapping is off the caret's row is horizontally scrolled, so add that
+        // scroll back on the row the click shares with the caret.
+        let mut target_display = (col as usize).saturating_sub(self.input_prompt_width);
+        if vrow_idx == self.input_cursor_vrow {
             target_display += self.input_h_scroll;
         }
 
-        // Walk the line accumulating display width until we pass the target,
+        // Walk the row accumulating display width until we pass the target,
         // landing on the nearest character boundary.
         let mut width = 0usize;
         let mut col_chars = 0usize;
-        for ch in line_text.chars() {
+        for ch in vrow.text.chars() {
             let cw = char_display_width(ch);
             if width + cw > target_display {
                 break;
@@ -831,7 +965,9 @@ impl Renderer {
             col_chars += 1;
         }
         Some(crate::ui::input::line_col_to_cursor(
-            input_line, line_idx, col_chars,
+            input_line,
+            vrow.logical,
+            vrow.start + col_chars,
         ))
     }
 
@@ -1521,8 +1657,12 @@ impl Renderer {
             return Ok(());
         }
 
-        let lines: SmallVec<[&str; 4]> = input_line.split('\n').collect();
-        let line_count = lines.len();
+        // Soft-wrap the buffer into visual rows (no newlines are inserted; this
+        // is display-only, Vim's `:set wrap`). Wrapping is measured against the
+        // same width `input_visible_height` uses, so the height the chat above
+        // was sized against matches what we draw here.
+        let vrows = wrap_input_rows(input_line, self.input_wrap_width(cols));
+        let line_count = vrows.len();
 
         let available_rows = (rows.saturating_sub(reserve) as usize).max(1);
         // Cap the input height to roughly 30% of the area so the chat history
@@ -1544,19 +1684,32 @@ impl Renderer {
         let (cursor_line, cursor_col) =
             crate::ui::input::cursor_to_line_col(input_line, cursor_pos);
 
-        // Vertical scroll: keep the cursor's line within the visible window so
-        // pressing Up/Down can reveal lines that don't fit on screen at once.
-        // Only follow the cursor when it actually moved, so mouse-wheel scrolling
-        // (which leaves the cursor put) is not snapped back every frame.
+        // Visual row the caret lands on: the last row of the caret's logical
+        // line that starts at or before the caret column.
+        let mut cursor_vrow_idx = 0usize;
+        for (idx, r) in vrows.iter().enumerate() {
+            if r.logical == cursor_line && r.start <= cursor_col {
+                cursor_vrow_idx = idx;
+            }
+        }
+        let cursor_vrow = &vrows[cursor_vrow_idx];
+        let local_col = (cursor_col - cursor_vrow.start).min(cursor_vrow.text.chars().count());
+        let cursor_prefix: String = cursor_vrow.text.chars().take(local_col).collect();
+        let cursor_display_col = display_width(&cursor_prefix);
+
+        // Vertical scroll: keep the caret's visual row within the visible window
+        // so pressing Up/Down can reveal rows that don't fit on screen at once.
+        // Only follow the caret when it actually moved, so mouse-wheel scrolling
+        // (which leaves the caret put) is not snapped back every frame.
         let cursor_moved = self.last_input_cursor != cursor_pos;
         self.last_input_cursor = cursor_pos;
         let first_visible = if need_scroll {
             self.input_max_vscroll = line_count - max_input_rows;
             if cursor_moved {
-                if cursor_line < self.input_vscroll_offset {
-                    self.input_vscroll_offset = cursor_line;
-                } else if cursor_line >= self.input_vscroll_offset + max_input_rows {
-                    self.input_vscroll_offset = cursor_line - max_input_rows + 1;
+                if cursor_vrow_idx < self.input_vscroll_offset {
+                    self.input_vscroll_offset = cursor_vrow_idx;
+                } else if cursor_vrow_idx >= self.input_vscroll_offset + max_input_rows {
+                    self.input_vscroll_offset = cursor_vrow_idx - max_input_rows + 1;
                 }
             }
             self.input_vscroll_offset = self.input_vscroll_offset.min(self.input_max_vscroll);
@@ -1567,22 +1720,13 @@ impl Renderer {
             0
         };
 
-        let visible_width = cols.saturating_sub(prompt_width as u16) as usize;
-        let cursor_line_text = lines.get(cursor_line).unwrap_or(&"");
-
-        // Convert cursor char-index to display column
-        let cursor_byte = cursor_line_text
-            .char_indices()
-            .nth(cursor_col)
-            .map(|(i, _)| i)
-            .unwrap_or(cursor_line_text.len());
-        let cursor_display_col = display_width(&cursor_line_text[..cursor_byte]);
-
-        let cursor_line_len = display_width(cursor_line_text);
+        // Horizontal scroll: only when wrapping is off. Wrapped rows always fit
+        // the field, so they never scroll; an unwrapped long line scrolls left
+        // so the caret stays visible.
+        let visible_width = (cols as usize).saturating_sub(prompt_width);
         let mut h_scroll = 0usize;
-        // `>=`: an exactly-full line still has its end-of-line caret one column
-        // past the right edge, so it must scroll too.
-        if cursor_line_len >= visible_width {
+        let cursor_row_len = display_width(&cursor_vrow.text);
+        if !self.input_wrap && cursor_row_len >= visible_width {
             if cursor_display_col < self.input_scroll_offset {
                 self.input_scroll_offset = cursor_display_col;
             } else if cursor_display_col >= self.input_scroll_offset + visible_width {
@@ -1590,7 +1734,7 @@ impl Renderer {
             }
             // +1 leaves a column for the caret, which sits *after* the last
             // character; without it the `min` unscrolls and pushes it off-screen.
-            let max_h_scroll = cursor_line_len
+            let max_h_scroll = cursor_row_len
                 .saturating_sub(visible_width)
                 .saturating_add(1);
             h_scroll = self.input_scroll_offset.min(max_h_scroll);
@@ -1625,9 +1769,9 @@ impl Renderer {
         self.input_first_visible = first_visible;
         self.input_visible_line_count = visible_line_count;
         self.input_h_scroll = h_scroll;
-        self.input_cursor_line = cursor_line;
+        self.input_cursor_vrow = cursor_vrow_idx;
 
-        for (i, line) in lines
+        for (i, row) in vrows
             .iter()
             .enumerate()
             .skip(first_visible)
@@ -1651,12 +1795,14 @@ impl Renderer {
                 write!(self.backend, "{}", " ".repeat(prompt_width))?;
             }
 
-            let line_chars: SmallVec<[char; 64]> = line.chars().collect();
-            // Skip chars to reach display column h_scroll, then take enough to fill visible_width
-            let skip_chars: usize = if i == cursor_line {
+            // With wrapping on, `row.text` already fits the field. With it off,
+            // skip the caret row's first `h_scroll` columns and clip the rest to
+            // the visible width.
+            let row_chars: SmallVec<[char; 64]> = row.text.chars().collect();
+            let skip_chars = if i == cursor_vrow_idx && h_scroll > 0 {
                 let mut w = 0usize;
                 let mut skip = 0usize;
-                for &ch in &line_chars {
+                for &ch in &row_chars {
                     let cw = char_display_width(ch);
                     if w + cw > h_scroll {
                         break;
@@ -1668,7 +1814,7 @@ impl Renderer {
             } else {
                 0
             };
-            let display: String = line_chars
+            let display: String = row_chars
                 .iter()
                 .skip(skip_chars)
                 .take(visible_width)
@@ -1690,12 +1836,16 @@ impl Renderer {
         // Cursor. Clamp to the visible input rows so that when the viewport is
         // scrolled away from the cursor line, the terminal caret stays inside
         // the input box instead of spilling onto the separator or status bar.
-        let cursor_render_idx = cursor_line
+        let cursor_render_idx = cursor_vrow_idx
             .saturating_sub(first_visible)
             .min(visible_line_count.saturating_sub(1));
         let cursor_row = (rows.saturating_sub(reserve) - visible_line_count as u16 + 1)
             + cursor_render_idx as u16;
-        let cursor_x = (prompt_width + cursor_display_col.saturating_sub(h_scroll)) as u16;
+        // The caret sits one past the last char of its row (shifted left by any
+        // horizontal scroll); clamp it into the terminal so it never spills
+        // onto the separator or off the right edge.
+        let cursor_x = (prompt_width + cursor_display_col.saturating_sub(h_scroll))
+            .min(cols.saturating_sub(1) as usize) as u16;
         self.exec(MoveTo(cursor_x, cursor_row))?;
         write!(self.backend, "{}", Show)?;
         self.backend.flush()?;

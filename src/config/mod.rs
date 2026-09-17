@@ -241,6 +241,12 @@ pub struct Config {
     /// the model has no per-token pricing configured). Default: false.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub show_cost_always: Option<bool>,
+    /// Soft-wrap long lines in the prompt editor on word boundaries
+    /// (display-only; no line feeds are inserted into typed text or pastes).
+    /// Default: false — a long line stays on one row and scrolls horizontally
+    /// so the caret stays visible.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wrap_input: Option<bool>,
     #[cfg(feature = "subagents")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_enabled: Option<bool>,
@@ -540,6 +546,11 @@ impl Config {
         self.show_cost_always.unwrap_or(false)
     }
 
+    /// Whether to soft-wrap long input lines on word boundaries. Default: false.
+    pub fn resolve_wrap_input(&self) -> bool {
+        self.wrap_input.unwrap_or(false)
+    }
+
     /// Look up the quick-model name associated with a prompt in
     /// `[prompt_to_model]`. Returns `None` when the prompt is not mapped or
     /// the value is an empty string (which means "no change").
@@ -724,6 +735,27 @@ code = "deepseek-v4-pro"
     fn resolve_mouse_capture_defaults_to_true() {
         let cfg = Config::default();
         assert!(cfg.resolve_mouse_capture());
+    }
+
+    #[test]
+    fn resolve_wrap_input_defaults_to_false() {
+        let cfg = Config::default();
+        assert!(!cfg.resolve_wrap_input());
+    }
+
+    #[test]
+    fn resolve_wrap_input_reads_config_value() {
+        let cfg = Config {
+            wrap_input: Some(true),
+            ..Default::default()
+        };
+        assert!(cfg.resolve_wrap_input());
+    }
+
+    #[test]
+    fn wrap_input_deserializes_from_toml() {
+        let cfg: Config = toml::from_str("wrap_input = true").unwrap();
+        assert!(cfg.resolve_wrap_input());
     }
 
     #[test]

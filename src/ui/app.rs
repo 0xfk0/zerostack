@@ -232,6 +232,7 @@ impl<'a> App<'a> {
         renderer.set_statusline_height(crate::ui::statusline::line_count());
         renderer.set_monochrome(ui.cli.no_color);
         renderer.set_chat_margin(ui.cfg.resolve_chat_left_margin());
+        renderer.set_input_wrap(ui.cfg.resolve_wrap_input());
         if let Some(ref theme_name) = ui.context.current_theme_name {
             if let Some(content) = ui.context.themes.get(theme_name.as_str()) {
                 crate::context::themes::apply(content, &mut renderer);
