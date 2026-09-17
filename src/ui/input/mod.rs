@@ -18,7 +18,7 @@ use crate::ui::pickers::rewind::{RewindOutcome, RewindPicker};
 const MAX_KILL_RING: usize = 30;
 
 /// Exchange the `Enter` and `Ctrl+J` key events when the
-/// `swap_enter_and_newline` setting is on.
+/// `multiline_prompt` setting is on.
 ///
 /// [`InputEditor::handle_key`] always reads a bare `Enter` as "submit" and
 /// `Ctrl+J` as "insert newline". Swapping the events before dispatch inverts

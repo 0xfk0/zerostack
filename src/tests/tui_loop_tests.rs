@@ -78,7 +78,7 @@ async fn headless_app_with_agent(agent: AnyAgent) -> App<'static> {
 }
 
 /// Same as [`headless_app_with_agent`], with a caller-supplied config (e.g. to
-/// turn on `swap_enter_and_newline`).
+/// turn on `multiline_prompt`).
 async fn headless_app_with_cfg(agent: AnyAgent, cfg: Config) -> App<'static> {
     isolate_data_dirs();
     let cli: &'static Cli = Box::leak(Box::new(Cli {
@@ -769,7 +769,7 @@ async fn type_slash_and_submit(app: &App<'static>, text: &str) {
     app.inject(enter_key()).await;
 }
 
-/// A headless `App` with `swap_enter_and_newline` on, around an idle mock agent
+/// A headless `App` with `multiline_prompt` on, around an idle mock agent
 /// (no run is expected; the agent is only there to satisfy the constructor).
 async fn swapped_app() -> App<'static> {
     let model = fake_model::text_turns(Vec::<Vec<&str>>::new());
@@ -777,14 +777,14 @@ async fn swapped_app() -> App<'static> {
     headless_app_with_cfg(
         agent,
         Config {
-            swap_enter_and_newline: Some(true),
+            multiline_prompt: Some(true),
             ..Default::default()
         },
     )
     .await
 }
 
-/// Regression: with `swap_enter_and_newline`, a slash command in the buffer is
+/// Regression: with `multiline_prompt`, a slash command in the buffer is
 /// exempt from the swap, so the picker's `Enter` completes `/mode` and a second
 /// `Enter` submits it. Before, the swap applied unconditionally and both Enters
 /// only inserted newlines — no command could be sent.

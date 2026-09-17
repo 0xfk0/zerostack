@@ -164,13 +164,13 @@ pub struct Config {
     /// `y` key work identically either way.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clipboard_selection: Option<types::ClipboardSelection>,
-    /// Swap the roles of `Enter` and `Ctrl+J` in the prompt editor: `Enter`
-    /// inserts a newline, `Ctrl+J` submits. For terminals that cannot encode
-    /// `Shift`/`Alt+Enter` (xterm, the Linux console, screen, mosh), where
-    /// `Ctrl+J` is the only portable newline key. Default: false (`Enter`
-    /// sends, `Ctrl+J` inserts a newline).
+    /// Multiline prompt mode: swap the roles of `Enter` and `Ctrl+J` in the
+    /// prompt editor, so `Enter` inserts a newline and `Ctrl+J` submits. For
+    /// terminals that cannot encode `Shift`/`Alt+Enter` (xterm, the Linux
+    /// console, screen, mosh), where `Ctrl+J` is the only portable newline
+    /// key. Default: false (`Enter` sends, `Ctrl+J` inserts a newline).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub swap_enter_and_newline: Option<bool>,
+    pub multiline_prompt: Option<bool>,
     /// Whether quitting the TUI with `Ctrl-C` or `Ctrl-D` requires two presses.
     /// When `true`, the first press arms a pending quit and prints a hint; any
     /// other key cancels it, and a second consecutive press of either key
@@ -392,10 +392,11 @@ impl Config {
         self.clipboard_selection.unwrap_or_default()
     }
 
-    /// Whether `Enter` and `Ctrl+J` exchange roles in the prompt editor.
-    /// Default `false`: `Enter` submits and `Ctrl+J` inserts a newline.
-    pub fn resolve_swap_enter_and_newline(&self) -> bool {
-        self.swap_enter_and_newline.unwrap_or(false)
+    /// Whether the prompt editor is in multiline mode (`Enter` inserts a
+    /// newline, `Ctrl+J` submits). Default `false`: `Enter` submits and
+    /// `Ctrl+J` inserts a newline.
+    pub fn resolve_multiline_prompt(&self) -> bool {
+        self.multiline_prompt.unwrap_or(false)
     }
 
     /// Whether quitting the TUI via `Ctrl-C`/`Ctrl-D` needs two presses.
@@ -802,21 +803,21 @@ mouse_capture = false
     }
 
     #[test]
-    fn swap_enter_and_newline_defaults_off() {
-        assert!(!Config::default().resolve_swap_enter_and_newline());
+    fn multiline_prompt_defaults_off() {
+        assert!(!Config::default().resolve_multiline_prompt());
     }
 
     #[test]
-    fn toml_deserializes_swap_enter_and_newline() {
-        let cfg: Config = toml::from_str("swap_enter_and_newline = true\n").unwrap();
-        assert_eq!(cfg.swap_enter_and_newline, Some(true));
-        assert!(cfg.resolve_swap_enter_and_newline());
+    fn toml_deserializes_multiline_prompt() {
+        let cfg: Config = toml::from_str("multiline_prompt = true\n").unwrap();
+        assert_eq!(cfg.multiline_prompt, Some(true));
+        assert!(cfg.resolve_multiline_prompt());
 
         let cfg = Config {
-            swap_enter_and_newline: Some(false),
+            multiline_prompt: Some(false),
             ..Default::default()
         };
-        assert!(!cfg.resolve_swap_enter_and_newline());
+        assert!(!cfg.resolve_multiline_prompt());
     }
 
     #[test]

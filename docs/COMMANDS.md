@@ -299,8 +299,8 @@ layers did not consume.
 
 | Shortcut | Action |
 | -------- | ------ |
-| `Enter` | Send message. With `swap_enter_and_newline`, insert newline instead — except when the buffer starts with a slash command, which `Enter` always submits. |
-| `Ctrl+J` | Insert newline. With `swap_enter_and_newline`, send the message instead. |
+| `Enter` | Send message. With `multiline_prompt`, insert newline instead — except when the buffer starts with a slash command, which `Enter` always submits. |
+| `Ctrl+J` | Insert newline. With `multiline_prompt`, send the message instead. |
 | `Alt+Enter` / `Shift+Enter` | Insert newline. |
 | `Tab` | Insert two spaces. |
 | `Ctrl+A` / `Ctrl+E` | Jump to the start / end of the line (again: the previous line's end / next line's start). |
@@ -360,7 +360,7 @@ set -g extended-keys-format csi-u
 
 GNU screen, mosh, and the Linux virtual console never forward those sequences,
 so use `Ctrl+J` there. To make `Enter` insert a newline and submit with
-`Ctrl+J` instead, set `swap_enter_and_newline = true` (see
+`Ctrl+J` instead, set `multiline_prompt = true` (see
 [CONFIG.md](CONFIG.md)).
 
 ### `Alt` keys on terminals without CSI-u

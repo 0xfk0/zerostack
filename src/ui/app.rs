@@ -1166,13 +1166,13 @@ impl<'a> App<'a> {
             return Ok(());
         }
 
-        // `swap_enter_and_newline`: exchange `Enter` and `Ctrl+J` before the
+        // `multiline_prompt`: exchange `Enter` and `Ctrl+J` before the
         // editor sees them, so `Enter` inserts a newline and `Ctrl+J` submits.
         // Done here, after the picker handling above, so a picker's `Enter`
         // still selects a row. A buffer that already holds a slash command is
         // the exception: `Enter` submits it (matching `classify_submission`),
         // so picking `/mode` from the picker and pressing `Enter` runs it.
-        let key = if self.ui.cfg.resolve_swap_enter_and_newline()
+        let key = if self.ui.cfg.resolve_multiline_prompt()
             && !self.input.buffer.trim_start().starts_with('/')
         {
             crate::ui::input::swap_enter_and_newline(key)
