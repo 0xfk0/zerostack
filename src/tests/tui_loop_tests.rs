@@ -153,6 +153,26 @@ fn left_key() -> UserEvent {
     UserEvent::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
 }
 
+fn home_key() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+}
+
+fn end_key() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+}
+
+fn ctrl_j_key() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL))
+}
+
+fn ctrl_home_key() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL))
+}
+
+fn ctrl_end_key() -> UserEvent {
+    UserEvent::Key(KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL))
+}
+
 fn ctrl_c() -> UserEvent {
     UserEvent::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
 }
@@ -814,6 +834,105 @@ async fn swapped_enter_still_newlines_plain_text() {
     step_until(&mut app, |a| a.input_buffer() == "hello\n").await;
 
     assert!(!app.is_running());
+    app.teardown().await;
+}
+
+/// A headless `App` (in `multiline_prompt` mode when `multiline` is set) whose
+/// transcript holds enough lines to scroll — the 80x24 `FakeBackend` shows far
+/// fewer rows than the scripted response emits.
+async fn scrollable_app(multiline: bool) -> App<'static> {
+    let long: &'static str =
+        Box::leak(format!("{}\nMARKER_END\n", "x\n".repeat(60)).into_boxed_str());
+    let cfg = Config {
+        multiline_prompt: multiline.then_some(true),
+        ..Default::default()
+    };
+    let mut app = headless_app_cfg(vec![vec![long]], cfg).await;
+
+    for c in "hi".chars() {
+        app.inject(char_key(c)).await;
+    }
+    // In `multiline_prompt` mode `Enter` inserts a newline; `Ctrl+J` submits.
+    app.inject(if multiline { ctrl_j_key() } else { enter_key() })
+        .await;
+    step_until(&mut app, |a| a.feed_text().contains("MARKER_END")).await;
+    app
+}
+
+/// With `multiline_prompt` on, bare `Home`/`End` move the prompt cursor to the
+/// first line / first char and the last line / past the last char, leaving the
+/// transcript alone; the transcript jumps move to `Ctrl+Home`/`Ctrl+End`.
+#[tokio::test]
+async fn multiline_prompt_routes_home_end_to_the_prompt() {
+    let _guard = acquire();
+    let mut app = scrollable_app(true).await;
+
+    for c in "abc".chars() {
+        app.inject(char_key(c)).await;
+    }
+    step_until(&mut app, |a| a.input_buffer() == "abc").await;
+
+    // Bare `Enter` inserts a newline in this mode, so the buffer is two lines.
+    app.inject(enter_key()).await;
+    step_until(&mut app, |a| a.input_buffer() == "abc\n").await;
+    for c in "de".chars() {
+        app.inject(char_key(c)).await;
+    }
+    step_until(&mut app, |a| a.input_buffer() == "abc\nde").await;
+    assert_eq!(app.input_cursor(), 6);
+    assert!(!app.is_scrolling(), "transcript starts at the bottom");
+
+    // Bare `Home`: first line, first char. Transcript untouched.
+    app.inject(home_key()).await;
+    step_until(&mut app, |a| a.input_cursor() == 0).await;
+    assert_eq!(app.input_buffer(), "abc\nde");
+    assert!(!app.is_scrolling(), "Home must not scroll the transcript");
+
+    // Bare `End`: last line, past the last char. Transcript untouched.
+    app.inject(end_key()).await;
+    step_until(&mut app, |a| a.input_cursor() == "abc\nde".len()).await;
+    assert!(!app.is_scrolling(), "End must not scroll the transcript");
+
+    // `Ctrl+Home` / `Ctrl+End`: the transcript jumps, prompt cursor stays.
+    app.inject(ctrl_home_key()).await;
+    step_until(&mut app, |a| a.is_scrolling()).await;
+    assert_eq!(
+        app.input_cursor(),
+        6,
+        "Ctrl+Home must not move the prompt cursor"
+    );
+
+    app.inject(ctrl_end_key()).await;
+    step_until(&mut app, |a| !a.is_scrolling()).await;
+    assert_eq!(app.input_cursor(), 6);
+
+    app.teardown().await;
+}
+
+/// Negative control: without `multiline_prompt` the old mapping holds — bare
+/// `Home`/`End` scroll the transcript and leave the prompt cursor alone.
+#[tokio::test]
+async fn home_end_still_scroll_the_transcript_by_default() {
+    let _guard = acquire();
+    let mut app = scrollable_app(false).await;
+
+    for c in "abc".chars() {
+        app.inject(char_key(c)).await;
+    }
+    step_until(&mut app, |a| a.input_buffer() == "abc").await;
+
+    app.inject(home_key()).await;
+    step_until(&mut app, |a| a.is_scrolling()).await;
+    assert_eq!(
+        app.input_cursor(),
+        3,
+        "Home must not move the prompt cursor"
+    );
+
+    app.inject(end_key()).await;
+    step_until(&mut app, |a| !a.is_scrolling()).await;
+    assert_eq!(app.input_cursor(), 3);
+
     app.teardown().await;
 }
 

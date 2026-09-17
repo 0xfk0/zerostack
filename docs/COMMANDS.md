@@ -273,7 +273,7 @@ layers did not consume.
 | `Ctrl+R` | Toggle reasoning visibility. |
 | `Ctrl+Up` / `Ctrl+Down` | Scroll the transcript one line. |
 | `PageUp` / `PageDown` | Scroll the transcript one page. |
-| `Home` / `End` | Scroll the transcript to the top / bottom. |
+| `Home` / `End` | Scroll the transcript to the top / bottom. With `multiline_prompt`, these move the prompt cursor instead and the transcript jumps move to `Ctrl+Home` / `Ctrl+End`. |
 | `Alt+M` | Open the quick-model switcher (`Tab` toggles Quick/Provider, `Enter` applies immediately via `/models <name>`). |
 | `Alt+P` | Open the prompt switcher (`Enter` applies immediately via `/prompt <name>`, including `%%mode=` and `[prompt_to_model]`). |
 | `Ctrl+G` | Open the current input in the system editor (`$EDITOR`). |
@@ -309,6 +309,7 @@ layers did not consume.
 | `Left` / `Right` | Move one character left / right. |
 | `Up` / `Down` | Move the cursor up / down; at the first / last line, previous / next history entry. |
 | `Ctrl+P` / `Ctrl+N` | Same as `Up` / `Down`. |
+| `Home` / `End` | With `multiline_prompt`, jump to the first line / first char and the last line / past the last char. Otherwise they scroll the transcript (see Global). |
 | `Backspace` | Delete the character before the cursor. |
 | `Delete` | Delete the character under the cursor. |
 | `Ctrl+W` | Delete word backwards. |

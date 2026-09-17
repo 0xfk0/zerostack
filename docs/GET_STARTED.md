@@ -151,7 +151,7 @@ Here is some keybindings to speed up your coding experience:
 | `Ctrl+S` | Force-save session |
 | `Ctrl+C` | Interrupt the agent |
 | `PgUp` / `PgDn` | Scroll chat |
-| `Home` / `End` | Jump to top/bottom |
+| `Home` / `End` | Jump to top/bottom (with `multiline_prompt`: `Ctrl+Home`/`Ctrl+End`, and `Home`/`End` move the prompt cursor) |
 
 ## 5. CLI flags
 

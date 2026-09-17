@@ -281,7 +281,15 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
         ctx.renderer,
         "  Ctrl+Up/Ctrl+Down      scroll chat one line",
     );
-    write_result(ctx.renderer, "  Home/End               jump to top/bottom");
+    if ctx.cfg.resolve_multiline_prompt() {
+        write_result(ctx.renderer, "  Ctrl+Home/Ctrl+End     jump to top/bottom");
+        write_result(
+            ctx.renderer,
+            "  Home/End               prompt start/end (multiline_prompt)",
+        );
+    } else {
+        write_result(ctx.renderer, "  Home/End               jump to top/bottom");
+    }
     write_result(
         ctx.renderer,
         "  @<query>               file picker (Tab/Enter select, Esc cancel)",

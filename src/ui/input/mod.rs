@@ -712,6 +712,9 @@ impl InputEditor {
                 self.yank_pos = None;
                 self.cursor_down()
             }
+            // Only reachable in `multiline_prompt` mode, where the app leaves
+            // bare `Home`/`End` to the editor instead of scrolling the
+            // transcript: first line / first char and last line / end.
             KeyCode::Home => {
                 self.cursor = 0;
                 self.yank_pos = None;

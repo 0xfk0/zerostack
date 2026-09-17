@@ -684,6 +684,11 @@ impl<'a> App<'a> {
     }
 
     #[cfg(test)]
+    pub(crate) fn input_cursor(&self) -> usize {
+        self.input.cursor
+    }
+
+    #[cfg(test)]
     pub(crate) fn backend_output(&self) -> String {
         self.renderer.captured_output()
     }
@@ -988,6 +993,12 @@ impl<'a> App<'a> {
             return Ok(());
         }
 
+        // `multiline_prompt` hands bare `Home`/`End` to the prompt editor
+        // below (start / end of the whole buffer) and moves the transcript
+        // jumps to `Ctrl+Home`/`Ctrl+End`.
+        let home_end_scrolls = !self.ui.cfg.resolve_multiline_prompt()
+            || key.modifiers.contains(KeyModifiers::CONTROL);
+
         match key.code {
             KeyCode::PageUp => {
                 self.renderer.scroll_page_up();
@@ -997,11 +1008,11 @@ impl<'a> App<'a> {
                 self.renderer.scroll_page_down();
                 return Ok(());
             }
-            KeyCode::Home => {
+            KeyCode::Home if home_end_scrolls => {
                 self.renderer.scroll_to_top();
                 return Ok(());
             }
-            KeyCode::End => {
+            KeyCode::End if home_end_scrolls => {
                 self.renderer.scroll_to_bottom()?;
                 return Ok(());
             }
