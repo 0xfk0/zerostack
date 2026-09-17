@@ -620,6 +620,72 @@ async fn slash_clear_resets_session_and_feed() {
 }
 
 #[tokio::test]
+async fn slash_new_starts_a_new_session_while_clear_keeps_id() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![vec!["hi there"]]).await;
+
+    type_and_submit(&app, "hello").await;
+    step_until(&mut app, |a| {
+        !a.is_running() && a.session().messages.len() == 2
+    })
+    .await;
+    let id_before = app.session().id.clone();
+
+    // /clear resets the conversation in place: same id, empty transcript.
+    type_slash_and_submit(&app, "/clear").await;
+    step_until(&mut app, |a| a.session().messages.is_empty()).await;
+    assert_eq!(
+        app.session().id,
+        id_before,
+        "/clear must keep the current session id"
+    );
+
+    // /new mints a brand-new session: different id, empty transcript.
+    type_slash_and_submit(&app, "/new").await;
+    step_until(&mut app, |a| a.session().id != id_before).await;
+    assert_ne!(app.session().id, id_before, "/new must start a new session");
+    assert!(app.session().messages.is_empty());
+    assert!(
+        app.feed_text().contains("new session"),
+        "feed should announce the new session: {}",
+        app.feed_text()
+    );
+
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn help_documents_clear_and_new_distinctly() {
+    let _guard = acquire();
+    let (mut app, _model) = headless_app(vec![]).await;
+
+    type_slash_and_submit(&app, "/help").await;
+    step_until(&mut app, |a| a.feed_text().contains("commands:")).await;
+
+    let feed = app.feed_text();
+    assert!(
+        !feed.contains("clear screen"),
+        "/help must not describe /clear as a screen clear: {feed}"
+    );
+    assert!(
+        !feed.contains("/clear [/new]"),
+        "/help must not collapse /clear and /new into one entry: {feed}"
+    );
+    assert_eq!(
+        feed.matches("reset the current session in place").count(),
+        1,
+        "/clear help line must appear exactly once: {feed}"
+    );
+    assert_eq!(
+        feed.matches("start a new session").count(),
+        1,
+        "/new help line must appear exactly once: {feed}"
+    );
+
+    app.teardown().await;
+}
+
+#[tokio::test]
 async fn fake_backend_captures_output_and_paste_fills_input() {
     let _guard = acquire();
     let (mut app, _model) = headless_app(vec![]).await;

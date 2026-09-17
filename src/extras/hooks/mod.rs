@@ -243,8 +243,8 @@ pub(crate) async fn dispatch_session_start_with(
 }
 
 /// Production entry point: reads the process-wide dispatcher and dispatches
-/// `SessionStart` with `source` (one of `startup`, `resume`, `clear`; `compact`
-/// is not emitted here). No-op when no dispatcher is installed.
+/// `SessionStart` with `source` (one of `startup`, `resume`, `clear`, `new`;
+/// `compact` is not emitted here). No-op when no dispatcher is installed.
 pub(crate) async fn dispatch_session_start(source: &str) {
     let Some(dispatcher) = get_dispatcher() else {
         return;

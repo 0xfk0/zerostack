@@ -10,8 +10,8 @@ All slash commands are available from the TUI input prompt.
 
 | Command | Description |
 | ------- | ----------- |
-| `/clear` | Clear the current session (all messages, tokens, compactions). |
-| `/new` | Alias for `/clear`. |
+| `/clear` | Reset the current session in place (all messages, tokens, compactions); the session id is kept. |
+| `/new` | Start a new session (fresh id and file); the previous session stays saved and listed under `/sessions`. |
 | `/undo` | Remove the last exchange (user message + assistant response). |
 | `/redo` | Restore whatever the most recent `/undo` or `/rewind` removed. |
 | `/rewind` | Open a picker to jump the session back to an earlier point. |

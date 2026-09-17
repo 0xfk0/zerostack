@@ -39,7 +39,11 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
         ctx.renderer,
         "  /memory [status|search|read|write|editor|clear]  manage memory",
     );
-    write_result(ctx.renderer, "  /clear [/new]          clear screen");
+    write_result(
+        ctx.renderer,
+        "  /clear                 reset the current session in place",
+    );
+    write_result(ctx.renderer, "  /new                   start a new session");
     write_result(
         ctx.renderer,
         "  /provider [name]       show or switch provider",
@@ -117,7 +121,6 @@ pub fn handle(_parts: &[&str], ctx: &mut SlashCtx<'_>) {
             "  /mcp logout <server>   remove a server's stored OAuth token",
         );
     }
-    write_result(ctx.renderer, "  /clear [/new]          clear screen");
     write_result(ctx.renderer, "  /undo                  undo last exchange");
     write_result(
         ctx.renderer,

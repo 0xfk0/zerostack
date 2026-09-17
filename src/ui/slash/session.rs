@@ -40,7 +40,8 @@ pub async fn handle(parts: &[&str], ctx: &mut SlashCtx<'_>) -> anyhow::Result<()
     match parts[0] {
         "/sessions" => handle_sessions(parts, ctx).await,
         "/rename" => handle_rename(parts, ctx).await,
-        "/clear" | "/new" => handle_clear(ctx).await,
+        "/clear" => handle_clear(ctx).await,
+        "/new" => handle_new(ctx).await,
         "/undo" => handle_undo(ctx).await,
         "/redo" => handle_redo(ctx).await,
         "/rewind" => handle_rewind(ctx).await,
@@ -263,6 +264,9 @@ async fn handle_sessions(parts: &[&str], ctx: &mut SlashCtx<'_>) -> anyhow::Resu
     Ok(())
 }
 
+/// `/clear` — reset the *current* session in place: wipe messages, tokens,
+/// calibration, compactions, and chain-decline state. The session id, name,
+/// file, and permission allowlist are untouched. Contrast `/new`.
 async fn handle_clear(ctx: &mut SlashCtx<'_>) -> anyhow::Result<()> {
     #[cfg(feature = "hooks")]
     crate::extras::hooks::dispatch_session_end("clear").await;
@@ -274,6 +278,54 @@ async fn handle_clear(ctx: &mut SlashCtx<'_>) -> anyhow::Result<()> {
     render_session(ctx.renderer, ctx.session, ctx.cli, ctx.cfg, ctx.context)?;
     #[cfg(feature = "hooks")]
     crate::extras::hooks::dispatch_session_start("clear").await;
+    Ok(())
+}
+
+/// `/new` — start a brand-new session, as if zerostack had been relaunched:
+/// fresh id and file, empty transcript and permission allowlist. The selected
+/// model/provider, the app-synced runtime fields, and the active prompt carry
+/// over so only the conversation itself is reset. The outgoing session is
+/// saved first so it stays listed under `/sessions`. Contrast `/clear`, which
+/// keeps the same session id and file.
+async fn handle_new(ctx: &mut SlashCtx<'_>) -> anyhow::Result<()> {
+    #[cfg(feature = "hooks")]
+    crate::extras::hooks::dispatch_session_end("new").await;
+
+    let name = ctx.cli.name.as_deref().unwrap_or("");
+    let mut fresh = crate::session::Session::new(
+        ctx.session.provider.as_str(),
+        ctx.session.model.as_str(),
+        ctx.session.context_window,
+        name,
+    );
+    // Carry over what a restart would otherwise re-derive or lose: model cost,
+    // the app-synced runtime fields, the working dir, and the active prompt.
+    fresh.input_token_cost = ctx.session.input_token_cost;
+    fresh.output_token_cost = ctx.session.output_token_cost;
+    fresh.reasoning_enabled = ctx.session.reasoning_enabled;
+    fresh.overhead_tokens = ctx.session.overhead_tokens;
+    fresh.show_cost_always = ctx.session.show_cost_always;
+    fresh.git_branch = ctx.session.git_branch.clone();
+    fresh.git_status = ctx.session.git_status.clone();
+    fresh.prompt = ctx.session.prompt.clone();
+    fresh.working_dir = ctx.session.working_dir.clone();
+
+    let old = std::mem::replace(ctx.session, fresh);
+    if !ctx.cli.no_session
+        && let Err(e) = crate::session::storage::save_session(&old)
+    {
+        write_error(
+            ctx.renderer,
+            format!("warning: failed to save previous session: {}", e),
+        );
+    }
+
+    ctx.context.chain_declined.clear();
+    render_session(ctx.renderer, ctx.session, ctx.cli, ctx.cfg, ctx.context)?;
+    let short = ctx.session.id.chars().take(8).collect::<String>();
+    write_ok(ctx.renderer, format!("new session {}", short));
+    #[cfg(feature = "hooks")]
+    crate::extras::hooks::dispatch_session_start("new").await;
     Ok(())
 }
 

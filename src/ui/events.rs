@@ -213,7 +213,8 @@ pub fn show_welcome(renderer: &mut Renderer) -> std::io::Result<()> {
         "    .autoconfig        Switches to auto-configurator",
     );
     feed.push_line(BlockStyle::Plain, "    /mode         Change security mode");
-    feed.push_line(BlockStyle::Plain, "    /clear        Clear session");
+    feed.push_line(BlockStyle::Plain, "    /clear        Reset current session");
+    feed.push_line(BlockStyle::Plain, "    /new          Start a new session");
     feed.push_line(BlockStyle::Plain, "    /undo         Undo last exchange");
     feed.push_line(
         BlockStyle::Plain,

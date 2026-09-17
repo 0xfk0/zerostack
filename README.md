@@ -276,7 +276,8 @@ This is a list of the most important slash commands:
 
 - `/model` — Switch model
 - `/thinking` — Set thinking level
-- `/clear` — Clear conversation
+- `/clear` — Reset the current session (keeps the same session id)
+- `/new` — Start a new session
 - `/session` — List/save/load sessions
 - `/loop` — Schedule recurring prompts
 - `/prompt` — List or change the agent's prompt

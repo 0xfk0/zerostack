@@ -103,7 +103,8 @@ By pressing `/` on an empty message, you can select any command to send the agen
 | ------- | ------------ |
 | `/help` | List all commands |
 | `/models <name>` | Switch model mid-session using Quick Models |
-| `/clear` | Start with a fresh context |
+| `/clear` | Reset the current conversation (same session) |
+| `/new` | Start a new session |
 | `/mode readonly` | Lock down to read-only |
 | `/undo` | Undo the last exchange |
 | `/redo` | Redo the last undo action |
