@@ -345,3 +345,214 @@ fn take_display_width_respects_columns_not_chars() {
     // Mixed widths: 'é' (1 col) then CJK.
     assert_eq!(take_display_width("é日本", 4), "é日");
 }
+
+// ---------------------------------------------------------------------------
+// Stale picker state: fall-through keys desync the buffer from the query.
+//
+// Left/Right/Delete are not picker keys: `handle_picker_key` returns false
+// and the app routes them to `InputEditor::handle_key`, which edits the
+// buffer without the picker's knowledge. The query (and its byte length)
+// then no longer match the buffer, and the picker splices must clamp —
+// never slice or insert out of bounds.
+// ---------------------------------------------------------------------------
+
+/// Editor with an active file picker over `buf` (cursor at the end); the
+/// picker query is the text after the '@'.
+fn editor_with_file_picker(buf: &str, cache: &[&str]) -> InputEditor {
+    let mut editor = InputEditor::new();
+    editor.buffer = CompactString::from(buf);
+    editor.cursor = buf.len();
+    let at = buf.rfind('@').expect("test buffer must contain '@'");
+    editor.picker = Some(Picker::File(file_picker_with(&buf[at + 1..], cache)));
+    editor
+}
+
+#[test]
+fn file_picker_esc_with_stale_query_clamps_instead_of_panicking() {
+    let mut editor = editor_with_file_picker("a@bc", &["main.rs"]);
+    // Delete 'c' behind the picker's back: Left/Delete are not picker keys
+    // and fall through to the editor, which edits the buffer sans query.
+    assert!(!editor.handle_picker_key(press(KeyCode::Left)));
+    editor.handle_key(press(KeyCode::Left));
+    assert!(!editor.handle_picker_key(press(KeyCode::Delete)));
+    editor.handle_key(press(KeyCode::Delete));
+    assert_eq!(editor.buffer.as_str(), "a@b"); // query still "bc" — stale
+
+    assert!(editor.handle_picker_key(press(KeyCode::Esc)));
+    // Esc drops '@' plus the query region, clamped to what the buffer has.
+    assert_eq!(editor.buffer.as_str(), "a");
+    assert_eq!(editor.cursor, 1);
+    assert!(!editor.picker.as_ref().is_some_and(|p| p.active()));
+}
+
+#[test]
+fn file_picker_enter_with_stale_query_clamps_instead_of_panicking() {
+    let mut editor = editor_with_file_picker("a@ma", &["main.rs"]);
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete));
+    assert_eq!(editor.buffer.as_str(), "a@m"); // query still "ma" — stale
+
+    assert!(editor.handle_picker_key(press(KeyCode::Enter)));
+    // Tail clamps to "" → "a" + the selected path.
+    assert_eq!(editor.buffer.as_str(), "amain.rs");
+    assert_eq!(editor.cursor, "amain.rs".len());
+    assert!(!editor.picker.as_ref().is_some_and(|p| p.active()));
+}
+
+#[test]
+fn file_picker_backspace_on_empty_buffer_does_not_panic() {
+    // Both backspace spellings must skip the remove on an empty buffer.
+    for key in [press(KeyCode::Backspace), ctrl('h')] {
+        let mut editor = editor_with_file_picker("@x", &["x.txt"]);
+        editor.handle_key(press(KeyCode::Left));
+        editor.handle_key(press(KeyCode::Left));
+        editor.handle_key(press(KeyCode::Delete)); // '@' → "x"
+        editor.handle_key(press(KeyCode::Delete)); // 'x' → ""
+        assert_eq!(editor.buffer.as_str(), "");
+
+        assert!(editor.handle_picker_key(key));
+        assert_eq!(editor.buffer.as_str(), "");
+    }
+}
+
+#[test]
+fn command_picker_esc_with_stale_query_clamps_instead_of_panicking() {
+    let mut editor = InputEditor::new();
+    editor.buffer = CompactString::from("/he");
+    editor.cursor = 3;
+    editor.picker = Some(Picker::Command(list_picker_with(&["/help"], "he")));
+
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete));
+    assert_eq!(editor.buffer.as_str(), "/h"); // query still "he" — stale
+
+    assert!(editor.handle_picker_key(press(KeyCode::Esc)));
+    // Tail clamps to "" → just the '/'.
+    assert_eq!(editor.buffer.as_str(), "/");
+    assert_eq!(editor.cursor, 1);
+}
+
+#[test]
+fn command_picker_enter_with_stale_query_clamps_instead_of_panicking() {
+    let mut editor = InputEditor::new();
+    editor.buffer = CompactString::from("/he");
+    editor.cursor = 3;
+    editor.picker = Some(Picker::Command(list_picker_with(&["/help"], "he")));
+
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete));
+    assert_eq!(editor.buffer.as_str(), "/h"); // query still "he" — stale
+
+    assert!(editor.handle_picker_key(press(KeyCode::Enter)));
+    // Tail clamps to "" → "/help " with the cursor at the end.
+    assert_eq!(editor.buffer.as_str(), "/help ");
+    assert_eq!(editor.cursor, "/help ".len());
+}
+
+#[test]
+fn command_picker_char_input_with_stale_query_clamps_instead_of_panicking() {
+    let mut editor = InputEditor::new();
+    editor.buffer = CompactString::from("/he");
+    editor.cursor = 3;
+    editor.picker = Some(Picker::Command(list_picker_with(&["/help"], "he")));
+
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete)); // 'h' → "/e"
+    editor.handle_key(press(KeyCode::Delete)); // 'e' → "/"
+    assert_eq!(editor.buffer.as_str(), "/");
+
+    // Typing must clamp the insert position instead of going past the end.
+    assert!(editor.handle_picker_key(press(KeyCode::Char('x'))));
+    assert_eq!(editor.buffer.as_str(), "/x");
+    assert_eq!(editor.cursor, "/x".len());
+}
+
+#[test]
+fn prefixed_picker_enter_with_truncated_prefix_clamps_instead_of_panicking() {
+    let mut editor = InputEditor::new();
+    editor.buffer = CompactString::from("/prompt c");
+    editor.cursor = 9;
+    editor.picker = Some(Picker::Prefixed(
+        list_picker_with(&["code"], "c"),
+        "/prompt ",
+    ));
+
+    // Delete the query char, then the prefix's trailing space.
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete)); // 'c' → "/prompt "
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete)); // ' ' → "/prompt"
+    assert_eq!(editor.buffer.as_str(), "/prompt"); // shorter than "/prompt "
+
+    assert!(editor.handle_picker_key(press(KeyCode::Enter)));
+    // `before` clamps to "/prompt"; the tail clamps to "".
+    assert_eq!(editor.buffer.as_str(), "/promptcode");
+    assert_eq!(editor.cursor, "/promptcode".len());
+}
+
+#[test]
+fn prefixed_picker_char_input_with_shrunken_buffer_clamps_instead_of_panicking() {
+    let mut editor = InputEditor::new();
+    editor.buffer = CompactString::from("/prompt c");
+    editor.cursor = 9;
+    editor.picker = Some(Picker::Prefixed(
+        list_picker_with(&["code"], "c"),
+        "/prompt ",
+    ));
+
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete));
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete));
+    assert_eq!(editor.buffer.as_str(), "/prompt");
+
+    // Typing must clamp the insert position to the buffer length.
+    assert!(editor.handle_picker_key(press(KeyCode::Char('o'))));
+    assert_eq!(editor.buffer.as_str(), "/prompto");
+    assert_eq!(editor.cursor, "/prompto".len());
+}
+
+#[test]
+fn models_picker_enter_with_truncated_prefix_clamps_instead_of_panicking() {
+    let mut editor = InputEditor::new();
+    editor.buffer = CompactString::from("/models c");
+    editor.cursor = 9;
+    let mut mp = ModelsPicker::new();
+    mp.set_groups(Vec::new(), vec!["code".to_string()]);
+    mp.activate();
+    mp.char_input('c');
+    editor.picker = Some(Picker::Models(mp));
+
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete)); // 'c' → "/models "
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete)); // ' ' → "/models"
+    assert_eq!(editor.buffer.as_str(), "/models"); // shorter than "/models "
+
+    assert!(editor.handle_picker_key(press(KeyCode::Enter)));
+    assert_eq!(editor.buffer.as_str(), "/modelscode");
+    assert_eq!(editor.cursor, "/modelscode".len());
+}
+
+#[test]
+fn models_picker_char_input_with_shrunken_buffer_clamps_instead_of_panicking() {
+    let mut editor = InputEditor::new();
+    editor.buffer = CompactString::from("/models c");
+    editor.cursor = 9;
+    let mut mp = ModelsPicker::new();
+    mp.set_groups(Vec::new(), vec!["code".to_string()]);
+    mp.activate();
+    mp.char_input('c');
+    editor.picker = Some(Picker::Models(mp));
+
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete));
+    editor.handle_key(press(KeyCode::Left));
+    editor.handle_key(press(KeyCode::Delete));
+    assert_eq!(editor.buffer.as_str(), "/models");
+
+    assert!(editor.handle_picker_key(press(KeyCode::Char('o'))));
+    assert_eq!(editor.buffer.as_str(), "/modelso");
+    assert_eq!(editor.cursor, "/modelso".len());
+}

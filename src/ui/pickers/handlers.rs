@@ -22,7 +22,11 @@ pub fn handle_file_key(
             if picker.cursor > 0 {
                 picker.backspace();
                 *cursor = prev_char_boundary(buffer, *cursor);
-                buffer.remove(*cursor);
+                // Fall-through deletes can empty the buffer while the query
+                // still holds chars; only remove what exists.
+                if *cursor < buffer.len() {
+                    buffer.remove(*cursor);
+                }
             } else {
                 let at_pos = buffer.rfind('@');
                 if let Some(at) = at_pos {
@@ -47,7 +51,11 @@ pub fn handle_file_key(
             if picker.cursor > 0 {
                 picker.backspace();
                 *cursor = prev_char_boundary(buffer, *cursor);
-                buffer.remove(*cursor);
+                // Fall-through deletes can empty the buffer while the query
+                // still holds chars; only remove what exists.
+                if *cursor < buffer.len() {
+                    buffer.remove(*cursor);
+                }
                 true
             } else {
                 let at_pos = buffer.rfind('@');
@@ -87,9 +95,11 @@ pub fn handle_file_key(
                 let at_pos = buffer.rfind('@');
                 if let Some(at) = at_pos {
                     // Byte offsets: the query occupies `query.len()` bytes
-                    // right after the '@'.
+                    // right after the '@' — and can be stale (fall-through
+                    // keys edit the buffer without the picker), so clamp
+                    // instead of slicing past the end.
                     let (before, rest) = split_at_byte(buffer, at);
-                    let after = &rest[1 + picker.query.len()..];
+                    let (_, after) = split_at_byte(rest, 1 + picker.query.len());
                     let new_len = before.len() + path_str.len();
                     *buffer = format!("{}{}{}", before, path_str, after).into();
                     *cursor = new_len;
@@ -101,8 +111,10 @@ pub fn handle_file_key(
         KeyCode::Esc => {
             let at_pos = buffer.rfind('@');
             if let Some(at) = at_pos {
+                // The query can be stale (fall-through keys edit the buffer
+                // without the picker); clamp instead of slicing past the end.
                 let (before, rest) = split_at_byte(buffer, at);
-                let after = &rest[1 + picker.query.len()..];
+                let (_, after) = split_at_byte(rest, 1 + picker.query.len());
                 let new_cursor = before.len();
                 *buffer = format!("{}{}", before, after).into();
                 *cursor = new_cursor;
@@ -164,7 +176,9 @@ pub fn handle_command_key(
                 .nth(picker.cursor.saturating_sub(1))
                 .map(|(i, _)| i)
                 .unwrap_or(picker.query.len());
-            let pos = 1 + byte_in_query;
+            // Fall-through deletes can shrink the buffer below the (stale)
+            // query; clamp the insert position to what exists.
+            let pos = (1 + byte_in_query).min(buffer.len());
             buffer.insert(pos, c);
             *cursor += c.len_utf8();
             (true, None)
@@ -218,7 +232,9 @@ pub fn handle_command_key(
                 let selected = cmd.to_string();
                 let slash_pos = buffer.find('/').unwrap_or(0);
                 let (before, rest) = split_at_byte(buffer, slash_pos);
-                let after = &rest[1 + picker.query.len()..];
+                // The query can be stale (fall-through keys edit the buffer
+                // without the picker); clamp instead of slicing past the end.
+                let (_, after) = split_at_byte(rest, 1 + picker.query.len());
                 let insertion = if after.is_empty() || after.starts_with(' ') {
                     format!("{} ", selected)
                 } else {
@@ -279,7 +295,9 @@ pub fn handle_command_key(
         KeyCode::Esc => {
             let slash_pos = buffer.find('/').unwrap_or(0);
             let (before, rest) = split_at_byte(buffer, slash_pos);
-            let after = &rest[1 + picker.query.len()..];
+            // The query can be stale (fall-through keys edit the buffer
+            // without the picker); clamp instead of slicing past the end.
+            let (_, after) = split_at_byte(rest, 1 + picker.query.len());
             *buffer = format!("{}/{}", before, after).into();
             *cursor = slash_pos + 1;
             picker.deactivate();
@@ -334,7 +352,9 @@ pub fn handle_prefixed_key(
                 .nth(picker.cursor.saturating_sub(1))
                 .map(|(i, _)| i)
                 .unwrap_or(picker.query.len());
-            let insert_pos = prefix_len + byte_in_query;
+            // Fall-through deletes can shrink the buffer below the prefix
+            // and (stale) query; clamp the insert position to what exists.
+            let insert_pos = (prefix_len + byte_in_query).min(buffer.len());
             buffer.insert(insert_pos, c);
             *cursor += c.len_utf8();
             true
@@ -388,10 +408,14 @@ pub fn handle_prefixed_key(
         KeyCode::Enter => {
             if let Some(name) = picker.selected_name() {
                 let after_offset = prefix_len + picker.query.len();
-                let before = &buffer[..prefix_len];
+                // Fall-through deletes can shrink the buffer below the
+                // prefix; clamp `before` and derive the cursor from its
+                // real length.
+                let (before, _) = split_at_byte(buffer, prefix_len);
                 let (_, after) = split_at_byte(buffer, after_offset);
+                let new_cursor = before.len() + name.len();
                 *buffer = format!("{}{}{}", before, name, after).into();
-                *cursor = prefix_len + name.len();
+                *cursor = new_cursor;
             }
             picker.deactivate();
             true
@@ -456,7 +480,9 @@ pub fn handle_models_key(
                 .nth(picker.cursor.saturating_sub(1))
                 .map(|(i, _)| i)
                 .unwrap_or(picker.query.len());
-            let insert_pos = prefix_len + byte_in_query;
+            // Fall-through deletes can shrink the buffer below the prefix
+            // and (stale) query; clamp the insert position to what exists.
+            let insert_pos = (prefix_len + byte_in_query).min(buffer.len());
             buffer.insert(insert_pos, c);
             *cursor += c.len_utf8();
             true
@@ -503,10 +529,14 @@ pub fn handle_models_key(
         KeyCode::Enter => {
             if let Some(name) = picker.selected_name() {
                 let after_offset = prefix_len + picker.query.len();
-                let before = &buffer[..prefix_len];
+                // Fall-through deletes can shrink the buffer below the
+                // prefix; clamp `before` and derive the cursor from its
+                // real length.
+                let (before, _) = split_at_byte(buffer, prefix_len);
                 let (_, after) = split_at_byte(buffer, after_offset);
+                let new_cursor = before.len() + name.len();
                 *buffer = format!("{}{}{}", before, name, after).into();
-                *cursor = prefix_len + name.len();
+                *cursor = new_cursor;
             }
             picker.deactivate();
             true
